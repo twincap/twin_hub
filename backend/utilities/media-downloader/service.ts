@@ -2,12 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
-import type {
-  MediaDownloadJob,
-  MediaDownloadQuality,
-  MediaDownloadRequest,
-  MediaDownloaderConfig
-} from "./types";
+import type { MediaDownloadJob, MediaDownloadRequest, MediaDownloaderConfig } from "./types";
 
 type JobStore = Map<string, MediaDownloadJob>;
 
@@ -75,7 +70,6 @@ export function createMediaDownloadJob(input: MediaDownloadRequest) {
     status: "queued",
     url: input.url,
     format: input.format,
-    quality: input.quality,
     createdAt: now,
     updatedAt: now,
     logs: []
@@ -96,14 +90,6 @@ function validateRequest(input: MediaDownloadRequest, config: MediaDownloaderCon
       ok: false as const,
       status: 503,
       error: "MEDIA_DOWNLOADER_ENABLED=true is required on the server."
-    };
-  }
-
-  if (!input.acceptTerms) {
-    return {
-      ok: false as const,
-      status: 400,
-      error: "You must confirm that you have permission to download this media."
     };
   }
 
@@ -143,14 +129,6 @@ function validateRequest(input: MediaDownloadRequest, config: MediaDownloaderCon
     };
   }
 
-  if (!["best", "1080", "720", "480", "audio-best"].includes(input.quality)) {
-    return {
-      ok: false as const,
-      status: 400,
-      error: "Invalid quality."
-    };
-  }
-
   return {
     ok: true as const
   };
@@ -167,7 +145,7 @@ function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, confi
     outputTemplate,
     "--print",
     "after_move:filepath",
-    ...buildFormatArgs(input.format, input.quality),
+    ...buildFormatArgs(input.format),
     input.url
   ];
 
@@ -209,16 +187,12 @@ function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, confi
   });
 }
 
-function buildFormatArgs(format: MediaDownloadRequest["format"], quality: MediaDownloadQuality) {
+function buildFormatArgs(format: MediaDownloadRequest["format"]) {
   if (format === "mp3" || format === "wav") {
     return ["-f", "ba/bestaudio", "--extract-audio", "--audio-format", format, "--audio-quality", "0"];
   }
 
-  const formatSelector = quality === "best" || quality === "audio-best"
-    ? "bv*+ba/b"
-    : `bv*[height<=${quality}]+ba/b[height<=${quality}]/best[height<=${quality}]`;
-
-  return ["-f", formatSelector, "--merge-output-format", "mp4"];
+  return ["-f", "bv*+ba/b", "--merge-output-format", "mp4"];
 }
 
 function buildOutputTemplate(fileName?: string) {

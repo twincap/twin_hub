@@ -163,7 +163,7 @@ GET  /api/media-downloader?jobId=<jobId>
 GET  /api/media-downloader/file?jobId=<jobId>
 ```
 
-이 유틸은 서버 기능이 필요하므로 실제 로직은 `backend/utilities/media-downloader`에 있습니다. 프론트엔드는 URL, 형식, 품질, 권한 확인 값을 API로 전달하고 작업 상태를 polling합니다.
+이 유틸은 서버 기능이 필요하므로 실제 로직은 `backend/utilities/media-downloader`에 있습니다. 프론트엔드는 URL과 출력 형식을 API로 전달하고 작업 상태를 polling합니다. 품질은 항상 가능한 최고 품질로 처리합니다.
 
 ## Codec Converter 프론트엔드
 

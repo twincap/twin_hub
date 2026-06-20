@@ -1,15 +1,11 @@
 export type MediaDownloadFormat = "video" | "mp3" | "wav";
 
-export type MediaDownloadQuality = "best" | "1080" | "720" | "480" | "audio-best";
-
 export type MediaDownloadStatus = "queued" | "running" | "completed" | "failed";
 
 export type MediaDownloadRequest = {
   url: string;
   format: MediaDownloadFormat;
-  quality: MediaDownloadQuality;
   fileName?: string;
-  acceptTerms: boolean;
 };
 
 export type MediaDownloadJob = {
@@ -17,7 +13,6 @@ export type MediaDownloadJob = {
   status: MediaDownloadStatus;
   url: string;
   format: MediaDownloadFormat;
-  quality: MediaDownloadQuality;
   createdAt: string;
   updatedAt: string;
   outputPath?: string;

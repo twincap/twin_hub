@@ -37,9 +37,7 @@ export async function POST(request: Request) {
   const result = startMediaDownload({
     url: String(body.url ?? ""),
     format: body.format,
-    quality: body.quality,
-    fileName: body.fileName ? String(body.fileName) : undefined,
-    acceptTerms: Boolean(body.acceptTerms)
+    fileName: body.fileName ? String(body.fileName) : undefined
   });
 
   if (!result.ok) {
