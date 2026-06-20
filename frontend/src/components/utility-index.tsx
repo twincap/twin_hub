@@ -1,0 +1,116 @@
+"use client";
+
+import Link from "next/link";
+import { ArrowUpRight, Search } from "lucide-react";
+import type { CSSProperties } from "react";
+import { useMemo, useState } from "react";
+import type { UtilityDefinition } from "@/utilities/types";
+
+type UtilityIndexProps = {
+  utilities: UtilityDefinition[];
+};
+
+const allCategory = "전체";
+
+export function UtilityIndex({ utilities }: UtilityIndexProps) {
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState(allCategory);
+
+  const categories = useMemo(
+    () => [allCategory, ...Array.from(new Set(utilities.map((utility) => utility.category)))],
+    [utilities]
+  );
+
+  const filteredUtilities = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+
+    return utilities.filter((utility) => {
+      const matchesCategory = category === allCategory || utility.category === category;
+      const searchable = [
+        utility.name,
+        utility.summary,
+        utility.description,
+        utility.category,
+        utility.runtime,
+        utility.tags.join(" ")
+      ]
+        .join(" ")
+        .toLowerCase();
+
+      return matchesCategory && (!normalizedQuery || searchable.includes(normalizedQuery));
+    });
+  }, [category, query, utilities]);
+
+  return (
+    <section className="utility-index" aria-labelledby="utility-index-title">
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">Registry</p>
+          <h2 id="utility-index-title">유틸 레지스트리</h2>
+        </div>
+        <span className="runtime-pill">{filteredUtilities.length}개</span>
+      </div>
+
+      <div className="utility-controls">
+        <label className="searchbox" aria-label="유틸 검색">
+          <Search size={18} aria-hidden="true" />
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="이름, 태그, 런타임 검색"
+            type="search"
+          />
+        </label>
+        <div className="category-tabs" role="tablist" aria-label="카테고리">
+          {categories.map((item) => (
+            <button
+              className={item === category ? "active" : ""}
+              key={item}
+              onClick={() => setCategory(item)}
+              type="button"
+              role="tab"
+              aria-selected={item === category}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filteredUtilities.length ? (
+        <div className="utility-grid">
+          {filteredUtilities.map((utility) => (
+            <article className="utility-card" key={utility.slug} style={{ "--accent": utility.accent } as CSSProperties}>
+              <header>
+                <span className="status-pill">{utility.status}</span>
+                <span className="runtime-pill">{utility.runtime}</span>
+              </header>
+              <div>
+                <h3>{utility.name}</h3>
+                <p>{utility.summary}</p>
+              </div>
+              <div className="tag-list">
+                {utility.tags.map((tag) => (
+                  <span className="tag" key={tag}>
+                    {tag}
+                  </span>
+                ))}
+              </div>
+              <footer>
+                <span className="runtime-pill">{utility.category}</span>
+                <Link className="button primary" href={utility.path}>
+                  열기
+                  <ArrowUpRight size={16} aria-hidden="true" />
+                </Link>
+              </footer>
+            </article>
+          ))}
+        </div>
+      ) : (
+        <div className="empty-state">
+          {utilities.length ? "검색 결과가 없습니다." : "아직 등록된 유틸이 없습니다. GUIDELINES.md를 따라 첫 유틸을 추가하세요."}
+        </div>
+      )}
+    </section>
+  );
+}

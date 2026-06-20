@@ -1,0 +1,23 @@
+{
+  "name": "@twin-hub/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./health": "./health.ts",
+    "./utilities": "./utilities/index.ts",
+    "./utilities/media-converter": "./utilities/media-converter/index.ts",
+    "./utilities/media-downloader": "./utilities/media-downloader/index.ts",
+    "./lib/supabase/server": "./lib/supabase/server.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest"
+  }
+}
