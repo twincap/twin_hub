@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import {
@@ -41,6 +42,7 @@ export async function POST(request: Request) {
   const file = formData.get("file");
   const profileId = String(formData.get("profileId") ?? "");
   const outputName = formData.get("outputName") ? String(formData.get("outputName")) : undefined;
+  const outputDir = formData.get("outputDir") ? String(formData.get("outputDir")) : undefined;
 
   if (!(file instanceof File)) {
     return NextResponse.json(
@@ -64,7 +66,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const uploadDir = path.join(info.convertDir, "uploads", randomUUID());
+  const uploadDir = path.join(os.tmpdir(), "twin-hub", "media-converter", randomUUID());
   const inputPath = path.join(uploadDir, sanitizeFileName(file.name || "input.bin"));
   const bytes = Buffer.from(await file.arrayBuffer());
 
@@ -77,7 +79,8 @@ export async function POST(request: Request) {
     inputPath,
     originalName: file.name || "input.bin",
     profileId,
-    outputName
+    outputName,
+    outputDir
   });
 
   if (!result.ok) {

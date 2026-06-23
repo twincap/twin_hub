@@ -3,7 +3,7 @@ import { UtilityIndex } from "@/components/utility-index";
 import { utilities } from "@/utilities/registry";
 
 export const metadata = {
-  title: "Utilities"
+  title: "유틸"
 };
 
 export default function UtilitiesPage() {
@@ -13,8 +13,8 @@ export default function UtilitiesPage() {
       <main className="page-shell">
         <div className="section-head">
           <div>
-            <p className="eyebrow">Utilities</p>
-            <h1>유틸 목록</h1>
+            <p className="eyebrow">유틸</p>
+            <h1>목록</h1>
           </div>
         </div>
         <UtilityIndex utilities={utilities} />

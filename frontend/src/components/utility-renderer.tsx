@@ -1,5 +1,6 @@
 import MediaConverterUtility from "@/utilities/media-converter/page";
 import MediaDownloaderUtility from "@/utilities/media-downloader/page";
+import PdfMergerUtility from "@/utilities/pdf-merger/page";
 import type { UtilityDefinition } from "@/utilities/types";
 
 type UtilityRendererProps = {
@@ -12,6 +13,8 @@ export function UtilityRenderer({ utility }: UtilityRendererProps) {
       return <MediaConverterUtility />;
     case "media-downloader":
       return <MediaDownloaderUtility />;
+    case "pdf-merger":
+      return <PdfMergerUtility />;
     default:
       return (
         <div className="empty-state">

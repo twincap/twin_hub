@@ -8,13 +8,15 @@
     "./utilities": "./utilities/index.ts",
     "./utilities/media-converter": "./utilities/media-converter/index.ts",
     "./utilities/media-downloader": "./utilities/media-downloader/index.ts",
+    "./utilities/pdf-merger": "./utilities/pdf-merger/index.ts",
     "./lib/supabase/server": "./lib/supabase/server.ts"
   },
   "scripts": {
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@supabase/supabase-js": "latest"
+    "@supabase/supabase-js": "latest",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "@types/node": "latest",

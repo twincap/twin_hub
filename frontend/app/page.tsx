@@ -9,24 +9,24 @@ export default function HomePage() {
       <main className="page-shell">
         <section className="dashboard-intro" aria-labelledby="home-title">
           <div className="intro-copy">
-            <p className="eyebrow">Workspace</p>
+            <p className="eyebrow">작업공간</p>
             <h1 id="home-title">Twin Hub</h1>
           </div>
           <div className="system-panel" aria-label="프로젝트 구조">
             <div className="system-row">
-              <span>Frontend</span>
+              <span>프론트엔드</span>
               <strong>Next.js App Router</strong>
             </div>
             <div className="system-row">
-              <span>Backend</span>
-              <strong>Utility modules</strong>
+              <span>백엔드</span>
+              <strong>유틸별 모듈</strong>
             </div>
             <div className="system-row">
-              <span>Database</span>
-              <strong>Supabase ready</strong>
+              <span>데이터베이스</span>
+              <strong>Supabase 준비됨</strong>
             </div>
             <div className="system-row">
-              <span>Deploy</span>
+              <span>배포</span>
               <strong>Vercel</strong>
             </div>
           </div>

@@ -13,6 +13,7 @@ export type BackendUtilityPayload = {
 
 import { getMediaDownloaderPayload } from "./media-downloader";
 import { getMediaConverterPayload } from "./media-converter";
+import { getPdfMergerPayload } from "./pdf-merger";
 
 export async function getUtilityBackendPayload(input: BackendUtilityInput): Promise<BackendUtilityPayload | null> {
   switch (input.slug) {
@@ -20,6 +21,8 @@ export async function getUtilityBackendPayload(input: BackendUtilityInput): Prom
       return getMediaConverterPayload();
     case "media-downloader":
       return getMediaDownloaderPayload();
+    case "pdf-merger":
+      return getPdfMergerPayload();
     default:
       return null;
   }

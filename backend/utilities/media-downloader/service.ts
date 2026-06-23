@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, statSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { MediaDownloadJob, MediaDownloadRequest, MediaDownloaderConfig } from "./types";
 
@@ -25,11 +26,15 @@ const supportedHosts = [
   "b23.tv"
 ];
 
+const defaultNoOutputTimeoutMs = 30 * 60 * 1000;
+
 export function getMediaDownloaderConfig(): MediaDownloaderConfig {
   return {
     enabled: process.env.MEDIA_DOWNLOADER_ENABLED === "true",
-    downloadDir: process.env.MEDIA_DOWNLOAD_DIR ?? path.join(/*turbopackIgnore: true*/ process.cwd(), ".downloads", "media"),
-    ytdlpPath: process.env.YT_DLP_PATH ?? "yt-dlp"
+    downloadDir: resolveConfiguredDownloadDir(process.env.MEDIA_DOWNLOAD_DIR),
+    ytdlpPath: process.env.YT_DLP_PATH ?? "yt-dlp",
+    ytdlpJsRuntime: process.env.YT_DLP_JS_RUNTIME ?? "node",
+    noOutputTimeoutMs: parseNoOutputTimeout(process.env.YT_DLP_NO_OUTPUT_TIMEOUT_MS)
   };
 }
 
@@ -40,8 +45,10 @@ export function getMediaDownloaderInfo() {
     enabled: config.enabled,
     downloadDir: config.downloadDir,
     ytdlpPath: config.ytdlpPath,
+    ytdlpJsRuntime: config.ytdlpJsRuntime,
+    noOutputTimeoutMs: config.noOutputTimeoutMs,
     supportedHosts,
-    requires: ["yt-dlp", "ffmpeg for mp3/wav conversion"],
+    requires: ["yt-dlp", "ffmpeg for mp3/wav/opus conversion"],
     source: "backend/utilities/media-downloader",
     timestamp: new Date().toISOString()
   };
@@ -59,7 +66,9 @@ export function createMediaDownloadJob(input: MediaDownloadRequest) {
     return validation;
   }
 
-  mkdirSync(config.downloadDir, {
+  const outputDir = resolveOutputDir(input.outputDir, config.downloadDir);
+
+  mkdirSync(outputDir, {
     recursive: true
   });
 
@@ -70,8 +79,11 @@ export function createMediaDownloadJob(input: MediaDownloadRequest) {
     status: "queued",
     url: input.url,
     format: input.format,
+    outputDir,
+    progress: 0,
     createdAt: now,
     updatedAt: now,
+    lastOutputAt: now,
     logs: []
   };
 
@@ -121,7 +133,7 @@ function validateRequest(input: MediaDownloadRequest, config: MediaDownloaderCon
     };
   }
 
-  if (!["video", "mp3", "wav"].includes(input.format)) {
+  if (!["video", "mp3", "wav", "opus"].includes(input.format)) {
     return {
       ok: false as const,
       status: 400,
@@ -136,11 +148,16 @@ function validateRequest(input: MediaDownloadRequest, config: MediaDownloaderCon
 
 function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, config: MediaDownloaderConfig) {
   const outputTemplate = buildOutputTemplate(input.fileName);
+  const outputDir = job.outputDir ?? config.downloadDir;
   const args = [
     "--no-playlist",
+    "--newline",
     "--restrict-filenames",
+    "--live-from-start",
+    "--hls-use-mpegts",
+    ...buildJsRuntimeArgs(config),
     "--paths",
-    `home:${config.downloadDir}`,
+    `home:${outputDir}`,
     "--output",
     outputTemplate,
     "--print",
@@ -150,12 +167,28 @@ function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, confi
   ];
 
   job.status = "running";
+  job.progress = Math.max(job.progress, 1);
   job.updatedAt = new Date().toISOString();
   job.logs.push(`Starting yt-dlp ${args.slice(0, -1).join(" ")} <url>`);
 
   const child = spawn(config.ytdlpPath, args, {
     windowsHide: true
   });
+  const watchdog = setInterval(() => {
+    if (job.status !== "running") {
+      clearInterval(watchdog);
+      return;
+    }
+
+    const lastOutputAt = job.lastOutputAt ? Date.parse(job.lastOutputAt) : Date.parse(job.updatedAt);
+    const silentMs = Date.now() - lastOutputAt;
+
+    if (config.noOutputTimeoutMs > 0 && silentMs > config.noOutputTimeoutMs) {
+      child.kill();
+      failJob(job, `yt-dlp output stopped for more than ${Math.round(config.noOutputTimeoutMs / 1000)} seconds.`);
+      clearInterval(watchdog);
+    }
+  }, 10000);
 
   job.processId = child.pid;
 
@@ -168,10 +201,13 @@ function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, confi
   });
 
   child.on("error", (error) => {
+    clearInterval(watchdog);
     failJob(job, error.message);
   });
 
   child.on("close", (code) => {
+    clearInterval(watchdog);
+
     if (job.status === "failed") {
       return;
     }
@@ -188,11 +224,73 @@ function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, confi
 }
 
 function buildFormatArgs(format: MediaDownloadRequest["format"]) {
-  if (format === "mp3" || format === "wav") {
+  if (format === "mp3" || format === "wav" || format === "opus") {
     return ["-f", "ba/bestaudio", "--extract-audio", "--audio-format", format, "--audio-quality", "0"];
   }
 
   return ["-f", "bv*+ba/b", "--merge-output-format", "mp4"];
+}
+
+function buildJsRuntimeArgs(config: MediaDownloaderConfig) {
+  const runtime = config.ytdlpJsRuntime.trim();
+
+  if (!runtime || runtime === "none") {
+    return [];
+  }
+
+  return ["--js-runtimes", runtime];
+}
+
+function parseNoOutputTimeout(value: string | undefined) {
+  if (!value) {
+    return defaultNoOutputTimeoutMs;
+  }
+
+  const parsed = Number(value);
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return defaultNoOutputTimeoutMs;
+  }
+
+  return Math.floor(parsed);
+}
+
+function getDefaultDownloadsDir() {
+  return path.join(os.homedir(), "Downloads");
+}
+
+function resolveConfiguredDownloadDir(value: string | undefined) {
+  const defaultDir = getDefaultDownloadsDir();
+  const configured = value?.trim();
+
+  if (!configured) {
+    return defaultDir;
+  }
+
+  const resolved = path.resolve(configured);
+  const legacyDefaultDir = path.resolve(/*turbopackIgnore: true*/ process.cwd(), ".downloads", "media");
+
+  return samePath(resolved, legacyDefaultDir) ? defaultDir : resolved;
+}
+
+function resolveOutputDir(outputDir: string | undefined, fallbackDir: string) {
+  const configured = outputDir?.trim();
+
+  if (!configured) {
+    return fallbackDir;
+  }
+
+  const resolved = path.resolve(configured);
+  const legacyDefaultDir = path.resolve(/*turbopackIgnore: true*/ process.cwd(), ".downloads", "media");
+
+  return samePath(resolved, legacyDefaultDir) ? getDefaultDownloadsDir() : resolved;
+}
+
+function samePath(left: string, right: string) {
+  const normalizedLeft = path.normalize(left);
+  const normalizedRight = path.normalize(right);
+
+  return process.platform === "win32" ? normalizedLeft.toLowerCase() === normalizedRight.toLowerCase() : normalizedLeft === normalizedRight;
 }
 
 function buildOutputTemplate(fileName?: string) {
@@ -213,11 +311,41 @@ function handleOutput(job: MediaDownloadJob, output: string) {
     .filter(Boolean);
 
   for (const line of lines) {
+    handleProgressLine(job, line);
     job.logs.push(line);
   }
 
   job.logs = job.logs.slice(-80);
+  job.lastOutputAt = new Date().toISOString();
   job.updatedAt = new Date().toISOString();
+}
+
+function handleProgressLine(job: MediaDownloadJob, line: string) {
+  if (line.startsWith("[youtube]") || line.startsWith("[BiliBili]") || line.startsWith("[bilibili]")) {
+    job.progress = Math.max(job.progress, 2);
+  }
+
+  if (line.startsWith("[info]")) {
+    job.progress = Math.max(job.progress, 3);
+  }
+
+  if (line.startsWith("[download] Destination") || line.includes("Downloading m3u8 information")) {
+    job.progress = Math.max(job.progress, 5);
+  }
+
+  const progressMatch = line.match(/(?:\[download\]\s+|download:\s*)(\d+(?:\.\d+)?)%/);
+
+  if (progressMatch) {
+    const value = Number(progressMatch[1]);
+
+    if (Number.isFinite(value)) {
+      job.progress = Math.max(job.progress, Math.min(99, Math.floor(value)));
+    }
+  }
+
+  if (line.startsWith("[Merger]") || line.startsWith("[ExtractAudio]")) {
+    job.progress = Math.max(job.progress, 95);
+  }
 }
 
 function resolveOutputPath(job: MediaDownloadJob) {
@@ -236,6 +364,7 @@ function completeJob(job: MediaDownloadJob, outputPath: string) {
   job.status = "completed";
   job.outputPath = outputPath;
   job.fileName = path.basename(outputPath);
+  job.progress = 100;
   job.updatedAt = new Date().toISOString();
   job.logs.push(`Completed: ${job.fileName}`);
 }
@@ -243,6 +372,7 @@ function completeJob(job: MediaDownloadJob, outputPath: string) {
 function failJob(job: MediaDownloadJob, message: string) {
   job.status = "failed";
   job.error = message;
+  job.progress = job.progress || 0;
   job.updatedAt = new Date().toISOString();
   job.logs.push(`Failed: ${message}`);
 }

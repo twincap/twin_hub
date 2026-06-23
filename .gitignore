@@ -19,10 +19,13 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .next-dev*.log
+.logs
 
 # local generated files
 .downloads
 .conversions
+.local-tools
+다운로드
 
 # system
 .DS_Store

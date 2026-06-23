@@ -8,7 +8,7 @@ export function SiteHeader() {
         <span className="brand-mark">TH</span>
         <span>
           <strong>Twin Hub</strong>
-          <small>Utility workspace</small>
+          <small>유틸 작업공간</small>
         </span>
       </Link>
       <nav className="header-actions" aria-label="주요 링크">
@@ -16,7 +16,7 @@ export function SiteHeader() {
           <LayoutGrid size={18} aria-hidden="true" />
           유틸
         </Link>
-        <a className="icon-button" href="https://github.com" aria-label="GitHub" title="GitHub">
+        <a className="icon-button" href="https://github.com/twincap/twin_hub" aria-label="GitHub" title="GitHub">
           <GitBranch size={18} aria-hidden="true" />
         </a>
       </nav>

@@ -26,14 +26,7 @@ export function UtilityIndex({ utilities }: UtilityIndexProps) {
 
     return utilities.filter((utility) => {
       const matchesCategory = category === allCategory || utility.category === category;
-      const searchable = [
-        utility.name,
-        utility.summary,
-        utility.description,
-        utility.category,
-        utility.runtime,
-        utility.tags.join(" ")
-      ]
+      const searchable = [utility.name, utility.summary, utility.description, utility.category, utility.tags.join(" ")]
         .join(" ")
         .toLowerCase();
 
@@ -45,8 +38,8 @@ export function UtilityIndex({ utilities }: UtilityIndexProps) {
     <section className="utility-index" aria-labelledby="utility-index-title">
       <div className="section-head">
         <div>
-          <p className="eyebrow">Registry</p>
-          <h2 id="utility-index-title">유틸 레지스트리</h2>
+          <p className="eyebrow">유틸</p>
+          <h2 id="utility-index-title">목록</h2>
         </div>
         <span className="runtime-pill">{filteredUtilities.length}개</span>
       </div>
@@ -54,12 +47,7 @@ export function UtilityIndex({ utilities }: UtilityIndexProps) {
       <div className="utility-controls">
         <label className="searchbox" aria-label="유틸 검색">
           <Search size={18} aria-hidden="true" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="이름, 태그, 런타임 검색"
-            type="search"
-          />
+          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="이름, 태그, 형식 검색" type="search" />
         </label>
         <div className="category-tabs" role="tablist" aria-label="카테고리">
           {categories.map((item) => (
@@ -81,10 +69,6 @@ export function UtilityIndex({ utilities }: UtilityIndexProps) {
         <div className="utility-grid">
           {filteredUtilities.map((utility) => (
             <article className="utility-card" key={utility.slug} style={{ "--accent": utility.accent } as CSSProperties}>
-              <header>
-                <span className="status-pill">{utility.status}</span>
-                <span className="runtime-pill">{utility.runtime}</span>
-              </header>
               <div>
                 <h3>{utility.name}</h3>
                 <p>{utility.summary}</p>
@@ -107,9 +91,7 @@ export function UtilityIndex({ utilities }: UtilityIndexProps) {
           ))}
         </div>
       ) : (
-        <div className="empty-state">
-          {utilities.length ? "검색 결과가 없습니다." : "아직 등록된 유틸이 없습니다. GUIDELINES.md를 따라 첫 유틸을 추가하세요."}
-        </div>
+        <div className="empty-state">{utilities.length ? "검색 결과가 없습니다." : "등록된 유틸이 없습니다."}</div>
       )}
     </section>
   );

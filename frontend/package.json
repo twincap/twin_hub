@@ -14,6 +14,7 @@
     "@twin-hub/backend": "file:../backend",
     "lucide-react": "latest",
     "next": "latest",
+    "pdfjs-dist": "^6.0.227",
     "react": "latest",
     "react-dom": "latest"
   },

@@ -2,10 +2,10 @@ import type { UtilityDefinition } from "@/utilities/types";
 
 export const metadata = {
   slug: "media-converter",
-  name: "Codec Converter",
-  summary: "FFmpeg-powered audio, video, codec, and container converter.",
-  description: "Convert or remux common media formats including MP3, WAV, FLAC, Opus, AAC, H.264, H.265, VP9, AV1, and ProRes.",
-  category: "Media",
+  name: "코덱 변환기",
+  summary: "오디오와 비디오 파일을 원하는 형식으로 변환합니다.",
+  description: "여러 파일을 대기열에 등록하고 FFmpeg로 변환합니다.",
+  category: "미디어",
   tags: ["ffmpeg", "codec", "opus", "video", "audio", "remux"],
   runtime: "next-api",
   status: "beta",

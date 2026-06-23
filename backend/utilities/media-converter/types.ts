@@ -19,6 +19,7 @@ export type MediaConvertRequest = {
   originalName: string;
   profileId: string;
   outputName?: string;
+  outputDir?: string;
 };
 
 export type MediaConvertJob = {
@@ -30,7 +31,11 @@ export type MediaConvertJob = {
   updatedAt: string;
   inputPath: string;
   outputPath?: string;
+  outputDir?: string;
   fileName?: string;
+  progress: number;
+  durationMs?: number;
+  currentTimeMs?: number;
   logs: string[];
   error?: string;
   processId?: number;

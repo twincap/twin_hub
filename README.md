@@ -95,6 +95,8 @@ SUPABASE_SERVICE_ROLE_KEY=
 # Media Downloader
 MEDIA_DOWNLOADER_ENABLED=false
 YT_DLP_PATH=yt-dlp
+YT_DLP_JS_RUNTIME=node
+YT_DLP_NO_OUTPUT_TIMEOUT_MS=1800000
 MEDIA_DOWNLOAD_DIR=
 ```
 
@@ -109,7 +111,7 @@ Supabase가 필요 없는 유틸은 Supabase 값을 비워둬도 됩니다.
 1. `yt-dlp` 설치
 2. `ffmpeg` 설치
 3. `frontend/.env.local`에 `MEDIA_DOWNLOADER_ENABLED=true` 설정
-4. 필요하면 `YT_DLP_PATH`와 `MEDIA_DOWNLOAD_DIR` 지정
+4. 필요하면 `YT_DLP_PATH`, `YT_DLP_JS_RUNTIME`, `YT_DLP_NO_OUTPUT_TIMEOUT_MS`, `MEDIA_DOWNLOAD_DIR` 지정
 
 Vercel 서버리스는 실행 시간과 임시 파일 용량 제한이 있습니다. 긴 영상이나 큰 파일 다운로드는 로컬 실행, 별도 워커, 별도 서버에서 처리하는 구성이 더 적합합니다. 이 레포의 Vercel API route는 HTTP 입구로 유지하고, 무거운 다운로드 작업은 분리하는 것을 권장합니다.
 
