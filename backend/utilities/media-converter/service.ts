@@ -1,9 +1,9 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, statSync } from "node:fs";
-import os from "node:os";
+import { existsSync, mkdirSync, rmSync, rmdirSync, statSync } from "node:fs";
 import path from "node:path";
-import { getMediaConvertProfile, mediaConvertProfiles } from "./profiles";
+import { canUseLocalDesktopPaths, getDefaultUtilityOutputDir } from "../../lib/runtime.ts";
+import { getMediaConvertProfile, mediaConvertProfiles } from "./profiles.ts";
 import type { MediaConvertJob, MediaConvertRequest, MediaConverterConfig } from "./types";
 
 type JobStore = Map<string, MediaConvertJob>;
@@ -20,7 +20,7 @@ export function getMediaConverterConfig(): MediaConverterConfig {
     enabled: process.env.MEDIA_CONVERTER_ENABLED === "true",
     convertDir: resolveConfiguredConvertDir(process.env.MEDIA_CONVERT_DIR),
     ffmpegPath: process.env.FFMPEG_PATH ?? "ffmpeg",
-    maxUploadMb: Number(process.env.MEDIA_CONVERT_MAX_MB ?? 512)
+    maxUploadMb: parsePositiveNumber(process.env.MEDIA_CONVERT_MAX_MB, 512)
   };
 }
 
@@ -31,9 +31,9 @@ export function getMediaConverterInfo() {
   return {
     enabled: config.enabled,
     convertDir: config.convertDir,
+    canPickLocalFolder: canUseLocalDesktopPaths(),
+    storesOnServer: !canUseLocalDesktopPaths(),
     ffmpegDetected: ffmpeg.detected,
-    ffmpegPath: config.ffmpegPath,
-    ffmpegVersion: ffmpeg.version,
     maxUploadMb: config.maxUploadMb,
     profiles: mediaConvertProfiles,
     requires: ["ffmpeg"],
@@ -99,7 +99,8 @@ export function createMediaConvertJob(input: MediaConvertRequest) {
     outputDir,
     fileName,
     progress: 0,
-    logs: []
+    logs: [],
+    removeInputOnFinish: input.removeInputOnFinish
   };
 
   jobs.set(id, job);
@@ -166,10 +167,13 @@ function startConversion(job: MediaConvertJob, inputPath: string, outputPath: st
   });
 
   child.on("error", (error) => {
+    cleanupInput(job);
     failJob(job, error.message);
   });
 
   child.on("close", (code) => {
+    cleanupInput(job);
+
     if (job.status === "failed") {
       return;
     }
@@ -195,12 +199,8 @@ function buildOutputName(name: string, extension: string) {
   return `${base || "converted"}.${extension}`;
 }
 
-function getDefaultDownloadsDir() {
-  return path.join(os.homedir(), "Downloads");
-}
-
 function resolveConfiguredConvertDir(value: string | undefined) {
-  const defaultDir = getDefaultDownloadsDir();
+  const defaultDir = getDefaultUtilityOutputDir("media-conversions");
   const configured = value?.trim();
 
   if (!configured) {
@@ -214,6 +214,10 @@ function resolveConfiguredConvertDir(value: string | undefined) {
 }
 
 function resolveOutputDir(outputDir: string | undefined, fallbackDir: string) {
+  if (!canUseLocalDesktopPaths()) {
+    return fallbackDir;
+  }
+
   const configured = outputDir?.trim();
 
   if (!configured) {
@@ -223,7 +227,29 @@ function resolveOutputDir(outputDir: string | undefined, fallbackDir: string) {
   const resolved = path.resolve(configured);
   const legacyDefaultDir = path.resolve(/*turbopackIgnore: true*/ process.cwd(), ".conversions", "media");
 
-  return samePath(resolved, legacyDefaultDir) ? getDefaultDownloadsDir() : resolved;
+  return samePath(resolved, legacyDefaultDir) ? getDefaultUtilityOutputDir("media-conversions") : resolved;
+}
+
+function parsePositiveNumber(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function cleanupInput(job: MediaConvertJob) {
+  if (!job.removeInputOnFinish) {
+    return;
+  }
+
+  rmSync(job.inputPath, {
+    force: true
+  });
+
+  try {
+    rmdirSync(path.dirname(job.inputPath));
+  } catch {
+    // The directory can remain when another file is still using it.
+  }
 }
 
 function samePath(left: string, right: string) {

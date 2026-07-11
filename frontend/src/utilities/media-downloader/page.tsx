@@ -2,6 +2,7 @@
 
 import { Download, FilePlus2, FolderOpen, Loader2, Music, Video } from "lucide-react";
 import { useEffect, useState } from "react";
+import { JobProgress } from "@/components/job-progress";
 
 type DownloadFormat = "video" | "mp3" | "wav" | "opus";
 
@@ -14,14 +15,13 @@ type DownloadJob = {
   updatedAt: string;
   fileName?: string;
   progress: number;
-  logs: string[];
   error?: string;
 };
 
 type QueueItem = {
   localId: string;
   url: string;
-  status: "requesting" | "queued";
+  status: "requesting" | "queued" | "failed";
   job?: DownloadJob;
   error?: string;
 };
@@ -29,6 +29,8 @@ type QueueItem = {
 type InfoResponse = {
   enabled: boolean;
   downloadDir: string;
+  canPickLocalFolder?: boolean;
+  storesOnServer?: boolean;
   error?: string;
 };
 
@@ -50,11 +52,17 @@ type FolderPickerResponse = {
 };
 
 const activeStatuses = new Set(["queued", "running"]);
+const localBrowserHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"]);
+
+function isLocalBrowserHost() {
+  return localBrowserHosts.has(window.location.hostname.toLowerCase());
+}
 
 export default function MediaDownloaderUtility() {
   const [urls, setUrls] = useState("");
   const [format, setFormat] = useState<DownloadFormat>("video");
   const [outputDir, setOutputDir] = useState("");
+  const [canPickLocalFolder, setCanPickLocalFolder] = useState(false);
   const [pickingOutputDir, setPickingOutputDir] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [loadedInfo, setLoadedInfo] = useState(false);
@@ -67,8 +75,15 @@ export default function MediaDownloaderUtility() {
       const response = await fetch("/api/media-downloader");
       const payload = (await response.json()) as InfoResponse;
 
+      if (!response.ok) {
+        throw new Error(payload.error ?? "다운로드 설정을 불러오지 못했습니다.");
+      }
+
+      const localFolderAvailable = Boolean(payload.canPickLocalFolder) && isLocalBrowserHost();
+
       setEnabled(Boolean(payload.enabled));
-      setOutputDir(payload.downloadDir ?? "");
+      setCanPickLocalFolder(localFolderAvailable);
+      setOutputDir(localFolderAvailable ? payload.downloadDir ?? "" : "");
       setLoadedInfo(true);
 
       if (payload.error) {
@@ -89,23 +104,37 @@ export default function MediaDownloaderUtility() {
       return;
     }
 
-    const timer = window.setInterval(async () => {
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
       const updates = await Promise.all(
         activeItems.map(async (item) => {
           if (!item.job) {
             return null;
           }
 
-          const response = await fetch(`/api/media-downloader?jobId=${item.job.id}`);
-          const payload = (await response.json()) as StatusResponse;
+          try {
+            const response = await fetch(`/api/media-downloader?jobId=${item.job.id}`);
+            const payload = (await response.json()) as StatusResponse;
 
-          return {
-            localId: item.localId,
-            job: payload.job,
-            error: payload.error
-          };
+            return {
+              localId: item.localId,
+              job: payload.job,
+              error: response.ok && payload.job ? undefined : payload.error ?? "작업 상태를 확인하지 못했습니다.",
+              terminal: response.status === 404 || (response.ok && !payload.job)
+            };
+          } catch (pollError) {
+            return {
+              localId: item.localId,
+              error: pollError instanceof Error ? pollError.message : "작업 상태를 확인하지 못했습니다.",
+              terminal: false
+            };
+          }
         })
       );
+
+      if (cancelled) {
+        return;
+      }
 
       setQueue((current) =>
         current.map((item) => {
@@ -115,19 +144,36 @@ export default function MediaDownloaderUtility() {
             return item;
           }
 
+          if (update.terminal) {
+            return {
+              ...item,
+              status: "failed",
+              job: undefined,
+              error: update.error
+            };
+          }
+
           return {
             ...item,
             job: update.job ?? item.job,
-            error: update.error ?? item.error
+            error: update.error
           };
         })
       );
     }, 1000);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [queue]);
 
   async function handleOutputDirPick() {
+    if (!canPickLocalFolder) {
+      setError("폴더 선택은 Windows 로컬 실행에서만 사용할 수 있습니다. 완료 후 다시 받기로 저장하세요.");
+      return;
+    }
+
     setPickingOutputDir(true);
     setError("");
 
@@ -185,9 +231,13 @@ export default function MediaDownloaderUtility() {
     }));
 
     setQueue((current) => [...items, ...current]);
-    await Promise.all(items.map((item) => startDownload(item.localId, item.url)));
-    setUrls("");
-    setSubmitting(false);
+
+    try {
+      await Promise.all(items.map((item) => startDownload(item.localId, item.url)));
+      setUrls("");
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function startDownload(localId: string, url: string) {
@@ -200,7 +250,7 @@ export default function MediaDownloaderUtility() {
         body: JSON.stringify({
           url,
           format,
-          outputDir
+          outputDir: canPickLocalFolder ? outputDir : undefined
         })
       });
       const payload = (await response.json()) as StartResponse;
@@ -210,9 +260,9 @@ export default function MediaDownloaderUtility() {
           item.localId === localId
             ? {
                 ...item,
-                status: "queued",
-                job: payload.job,
-                error: response.ok ? undefined : payload.error ?? "다운로드를 시작하지 못했습니다."
+                status: response.ok && payload.job ? "queued" : "failed",
+                job: response.ok ? payload.job : undefined,
+                error: response.ok && payload.job ? undefined : payload.error ?? "다운로드를 시작하지 못했습니다."
               }
             : item
         )
@@ -223,7 +273,8 @@ export default function MediaDownloaderUtility() {
           item.localId === localId
             ? {
                 ...item,
-                status: "queued",
+                status: "failed",
+                job: undefined,
                 error: requestError instanceof Error ? requestError.message : "요청 실패"
               }
             : item
@@ -234,12 +285,13 @@ export default function MediaDownloaderUtility() {
 
   return (
     <div className="utility-surface">
-      <form className="download-form" onSubmit={handleSubmit}>
+      <form aria-busy={submitting} className="download-form" onSubmit={handleSubmit}>
         <label className="field form-span">
           <span>URL</span>
           <textarea
             value={urls}
             onChange={(event) => setUrls(event.target.value)}
+            placeholder="한 줄에 URL 하나"
             required
           />
         </label>
@@ -254,26 +306,46 @@ export default function MediaDownloaderUtility() {
           </select>
         </label>
 
-        <label className="field form-span">
-          <span>저장 경로</span>
-          <div className="path-picker">
-            <input value={outputDir} onChange={(event) => setOutputDir(event.target.value)} placeholder="예: C:/Users/twincap/Downloads" type="text" />
-            <button className="button" disabled={pickingOutputDir} onClick={handleOutputDirPick} type="button">
-              {pickingOutputDir ? <Loader2 size={16} aria-hidden="true" /> : <FolderOpen size={16} aria-hidden="true" />}
-              폴더 선택
-            </button>
+        {loadedInfo && canPickLocalFolder ? (
+          <div className="field form-span">
+            <label htmlFor="media-download-output-dir">저장 경로</label>
+            <div className="path-picker">
+              <input
+                id="media-download-output-dir"
+                value={outputDir}
+                onChange={(event) => setOutputDir(event.target.value)}
+                placeholder="예: C:/Users/twincap/Downloads"
+                type="text"
+              />
+              <button className="button" disabled={pickingOutputDir} onClick={handleOutputDirPick} type="button">
+                {pickingOutputDir ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <FolderOpen size={16} aria-hidden="true" />}
+                폴더 선택
+              </button>
+            </div>
           </div>
-        </label>
+        ) : null}
 
-        <button className="button primary form-span" disabled={submitting || !loadedInfo || !enabled} type="submit">
-          {submitting ? <Loader2 size={16} aria-hidden="true" /> : <FilePlus2 size={16} aria-hidden="true" />}
+        {loadedInfo && !canPickLocalFolder ? (
+          <div className="notice-box form-span" role="status">
+            배포 환경에서는 로컬 폴더를 직접 선택할 수 없습니다. 완료 후 각 항목의 다시 받기 버튼으로 파일을 저장하세요.
+          </div>
+        ) : null}
+
+        {loadedInfo && !enabled ? (
+          <div className="notice-box form-span" role="status">
+            이 서버에서는 미디어 다운로드 기능이 꺼져 있습니다.
+          </div>
+        ) : null}
+
+        <button className="button primary form-span" disabled={submitting || !loadedInfo || !enabled || !urls.trim()} type="submit">
+          {submitting ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <FilePlus2 size={16} aria-hidden="true" />}
           대기열에 등록
         </button>
       </form>
 
-      {error ? <div className="error-box">{error}</div> : null}
+      {error ? <div className="error-box" role="alert">{error}</div> : null}
 
-      <section className="job-panel" aria-label="다운로드 대기열">
+      <section className="job-panel" aria-label="다운로드 대기열" aria-live="polite">
         <div className="job-head">
           <div>
             {format === "video" ? <Video size={16} aria-hidden="true" /> : <Music size={16} aria-hidden="true" />}
@@ -300,18 +372,13 @@ function QueueRow({ item }: { item: QueueItem }) {
   const downloadUrl = job?.status === "completed" ? `/api/media-downloader/file?jobId=${job.id}` : "";
 
   return (
-    <div className="queue-item">
+    <div aria-busy={status === "requesting" || activeStatuses.has(status)} className="queue-item">
       <div className="queue-title">
         <strong>{job?.fileName ?? item.url}</strong>
         <span className="runtime-pill">{translateStatus(status)}</span>
       </div>
-      <div className="progress-row">
-        <div className="progress-track">
-          <div className="progress-fill" style={{ width: `${progress}%` }} />
-        </div>
-        <span>{progress}%</span>
-      </div>
-      {item.error || job?.error ? <div className="error-box">{item.error ?? job?.error}</div> : null}
+      <JobProgress progress={progress} runningLabel="작업 중" status={status} />
+      {item.error || job?.error ? <div className="error-box" role="alert">{item.error ?? job?.error}</div> : null}
       {downloadUrl ? (
         <a className="button primary" download={job?.fileName} href={downloadUrl}>
           <Download size={16} aria-hidden="true" />

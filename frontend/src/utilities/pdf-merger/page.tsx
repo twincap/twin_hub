@@ -2,6 +2,7 @@
 
 import { ArrowDown, ArrowUp, Download, FileStack, GripVertical, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { moveArrayItem, moveItemToTarget } from "@/utilities/pdf-merger/ordering";
 
 type PdfDocumentInfo = {
   fileIndex: number;
@@ -86,6 +87,8 @@ export default function PdfMergerUtility() {
     setThumbnails({});
     setDragOverId("");
     setDraggingId("");
+    setInspecting(false);
+    setRenderingPreviews(false);
 
     if (nextFiles.length === 0) {
       return;
@@ -122,6 +125,10 @@ export default function PdfMergerUtility() {
         throw new Error(payload.error ?? "PDF 페이지 정보를 읽지 못했습니다.");
       }
 
+      if (previewRunRef.current !== runId) {
+        return;
+      }
+
       const nextOrder = buildPageItems(payload.documents);
 
       setDocuments(payload.documents);
@@ -129,9 +136,13 @@ export default function PdfMergerUtility() {
       setInspecting(false);
       await renderPagePreviews(nextFiles, nextOrder, runId);
     } catch (inspectError) {
-      setError(inspectError instanceof Error ? inspectError.message : "PDF 페이지 정보를 읽지 못했습니다.");
+      if (previewRunRef.current === runId) {
+        setError(inspectError instanceof Error ? inspectError.message : "PDF 페이지 정보를 읽지 못했습니다.");
+      }
     } finally {
-      setInspecting(false);
+      if (previewRunRef.current === runId) {
+        setInspecting(false);
+      }
     }
   }
 
@@ -160,6 +171,10 @@ export default function PdfMergerUtility() {
           data: documentData.slice(0)
         }).promise;
 
+        if (previewRunRef.current !== runId) {
+          return;
+        }
+
         for (const pageItem of filePageItems) {
           if (previewRunRef.current !== runId) {
             return;
@@ -183,6 +198,10 @@ export default function PdfMergerUtility() {
             viewport
           }).promise;
 
+          if (previewRunRef.current !== runId) {
+            return;
+          }
+
           const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
 
           setThumbnails((current) => ({
@@ -192,7 +211,9 @@ export default function PdfMergerUtility() {
         }
       }
     } catch (previewError) {
-      setError(previewError instanceof Error ? previewError.message : "PDF 미리보기 이미지를 만들지 못했습니다.");
+      if (previewRunRef.current === runId) {
+        setError(previewError instanceof Error ? previewError.message : "PDF 미리보기 이미지를 만들지 못했습니다.");
+      }
     } finally {
       if (previewRunRef.current === runId) {
         setRenderingPreviews(false);
@@ -204,15 +225,17 @@ export default function PdfMergerUtility() {
     reorderWithAnimation((current) => moveArrayItem(current, index, index + offset));
   }
 
-  function handleDragOver(event: React.DragEvent<HTMLDivElement>, targetId: string) {
+  function handleDragOver(event: React.DragEvent<HTMLDivElement>) {
     event.preventDefault();
+  }
 
-    if (!draggingId || draggingId === targetId) {
+  function handleDragEnter(targetId: string) {
+    if (!draggingId || draggingId === targetId || dragOverId === targetId) {
       return;
     }
 
     setDragOverId(targetId);
-    reorderWithAnimation((current) => moveItemBefore(current, draggingId, targetId));
+    reorderWithAnimation((current) => moveItemToTarget(current, draggingId, targetId));
   }
 
   function handleDrop() {
@@ -282,10 +305,10 @@ export default function PdfMergerUtility() {
 
   return (
     <div className="utility-surface">
-      <form className="download-form" onSubmit={handleMerge}>
+      <form aria-busy={inspecting || merging} className="download-form" onSubmit={handleMerge}>
         <label className="field form-span">
           <span>PDF 파일 추가</span>
-          <input accept="application/pdf,.pdf" multiple onChange={handleFilesChange} type="file" />
+          <input accept="application/pdf,.pdf" disabled={merging} multiple onChange={handleFilesChange} type="file" />
         </label>
 
         <div className="pdf-selected-files form-span">
@@ -302,7 +325,14 @@ export default function PdfMergerUtility() {
               <span>
                 {indexToLabel(index)}: {file.name}
               </span>
-              <button className="icon-button" onClick={() => void removeFile(index)} type="button" title="삭제">
+              <button
+                aria-label={`${file.name} 삭제`}
+                className="icon-button"
+                disabled={inspecting || merging}
+                onClick={() => void removeFile(index)}
+                type="button"
+                title="삭제"
+              >
                 <Trash2 size={16} aria-hidden="true" />
               </button>
             </div>
@@ -315,16 +345,16 @@ export default function PdfMergerUtility() {
         </label>
 
         <button className="button primary form-span" disabled={inspecting || merging || order.length === 0} type="submit">
-          {merging ? <Loader2 size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
+          {merging ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
           PDF 병합
         </button>
 
         <span className="runtime-pill form-span">최대 업로드 {maxUploadMb}MB</span>
       </form>
 
-      {error ? <div className="error-box">{error}</div> : null}
+      {error ? <div className="error-box" role="alert">{error}</div> : null}
 
-      <section className="job-panel" aria-label="PDF 페이지 순서">
+      <section className="job-panel" aria-label="PDF 페이지 순서" aria-live="polite">
         <div className="job-head">
           <div>
             <FileStack size={16} aria-hidden="true" />
@@ -343,7 +373,7 @@ export default function PdfMergerUtility() {
           </div>
         ) : null}
 
-        <div className="pdf-sequence">
+        <div className="pdf-sequence" role="status">
           {sequenceText || (inspecting ? "PDF 페이지를 읽는 중입니다." : "PDF를 업로드하면 페이지 순서가 여기에 표시됩니다.")}
         </div>
 
@@ -363,9 +393,9 @@ export default function PdfMergerUtility() {
               data-page-id={item.id}
               draggable
               key={item.id}
+              onDragEnter={() => handleDragEnter(item.id)}
               onDragEnd={handleDrop}
-              onDragLeave={() => setDragOverId("")}
-              onDragOver={(event) => handleDragOver(event, item.id)}
+              onDragOver={handleDragOver}
               onDragStart={(event) => {
                 setDraggingId(item.id);
                 event.dataTransfer.effectAllowed = "move";
@@ -378,7 +408,7 @@ export default function PdfMergerUtility() {
                   <img alt={`${formatPageItem(item)} 미리보기`} src={thumbnails[item.id]} />
                 ) : (
                   <div className="pdf-page-thumb-placeholder">
-                    {renderingPreviews ? <Loader2 size={18} aria-hidden="true" /> : null}
+                    {renderingPreviews ? <Loader2 className="spin" size={18} aria-hidden="true" /> : null}
                     <span>{formatPageItem(item)}</span>
                   </div>
                 )}
@@ -391,10 +421,18 @@ export default function PdfMergerUtility() {
                   <span>{item.fileName}</span>
                 </div>
                 <div className="inline-actions">
-                  <button className="icon-button" disabled={index === 0} onClick={() => movePage(index, -1)} type="button" title="위로">
+                  <button
+                    aria-label={`${formatPageItem(item)} 위로 이동`}
+                    className="icon-button"
+                    disabled={index === 0}
+                    onClick={() => movePage(index, -1)}
+                    type="button"
+                    title="위로"
+                  >
                     <ArrowUp size={16} aria-hidden="true" />
                   </button>
                   <button
+                    aria-label={`${formatPageItem(item)} 아래로 이동`}
                     className="icon-button"
                     disabled={index === order.length - 1}
                     onClick={() => movePage(index, 1)}
@@ -427,26 +465,6 @@ function buildPageItems(documents: PdfDocumentInfo[]) {
 
 function formatPageItem(item: PageItem) {
   return `${item.fileLabel}${item.pageIndex + 1}`;
-}
-
-function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number) {
-  if (fromIndex < 0 || fromIndex >= items.length || toIndex < 0 || toIndex >= items.length) {
-    return items;
-  }
-
-  const next = [...items];
-  const [item] = next.splice(fromIndex, 1);
-
-  next.splice(toIndex, 0, item);
-
-  return next;
-}
-
-function moveItemBefore(items: PageItem[], draggingId: string, targetId: string) {
-  const fromIndex = items.findIndex((item) => item.id === draggingId);
-  const toIndex = items.findIndex((item) => item.id === targetId);
-
-  return moveArrayItem(items, fromIndex, toIndex);
 }
 
 function capturePageRects(container: HTMLDivElement | null) {
@@ -523,7 +541,7 @@ function downloadBlob(blob: Blob, fileName: string) {
   document.body.append(link);
   link.click();
   link.remove();
-  URL.revokeObjectURL(url);
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function indexToLabel(index: number) {

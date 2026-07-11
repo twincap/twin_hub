@@ -210,4 +210,5 @@ ffmpeg
 - [ ] 환경 변수가 필요하면 `frontend/.env.local`과 Vercel에 추가
 - [ ] `npm run typecheck`
 - [ ] `npm run lint`
+- [ ] `npm run test`
 - [ ] `npm run build`

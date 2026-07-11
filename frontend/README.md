@@ -31,6 +31,7 @@ http://localhost:3000
 ```bash
 npm run lint
 npm run typecheck
+npm run test
 npm run build
 npm run check
 ```
@@ -41,6 +42,7 @@ npm run check
 cd frontend
 npm run lint
 npm run typecheck
+npm run test
 npm run build
 ```
 

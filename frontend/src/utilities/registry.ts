@@ -3,7 +3,9 @@ import { metadata as mediaDownloaderMetadata } from "@/utilities/media-downloade
 import { metadata as pdfMergerMetadata } from "@/utilities/pdf-merger/metadata";
 import type { UtilityDefinition } from "@/utilities/types";
 
-export const utilities: UtilityDefinition[] = [mediaConverterMetadata, mediaDownloaderMetadata, pdfMergerMetadata];
+export const utilities = [mediaConverterMetadata, mediaDownloaderMetadata, pdfMergerMetadata] as const satisfies readonly UtilityDefinition[];
+
+export type UtilitySlug = (typeof utilities)[number]["slug"];
 
 export function getUtility(slug: string) {
   return utilities.find((utility) => utility.slug === slug);

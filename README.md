@@ -40,8 +40,9 @@ http://localhost:3000
 npm run dev        # frontend Next.js 개발 서버 실행
 npm run lint       # frontend lint
 npm run typecheck  # frontend/backend 타입체크
+npm run test       # frontend/backend 자동 테스트
 npm run build      # Vercel 배포용 production build 확인
-npm run check      # lint + typecheck + build 전체 확인
+npm run check      # lint + typecheck + test + build 전체 확인
 ```
 
 ## 유틸 추가 위치
@@ -96,6 +97,10 @@ SUPABASE_SERVICE_ROLE_KEY=
 MEDIA_DOWNLOADER_ENABLED=false
 YT_DLP_PATH=yt-dlp
 YT_DLP_JS_RUNTIME=node
+YT_DLP_SOCKET_TIMEOUT_SECONDS=30
+YT_DLP_RETRIES=10
+YT_DLP_FRAGMENT_RETRIES=10
+YT_DLP_STALLED_TIMEOUT_MS=120000
 YT_DLP_NO_OUTPUT_TIMEOUT_MS=1800000
 MEDIA_DOWNLOAD_DIR=
 ```

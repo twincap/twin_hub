@@ -1,8 +1,19 @@
 import { createMediaDownloadJob, getMediaDownloaderInfo, getMediaDownloadJob } from "./service";
+import { toMediaDownloadPublicJob } from "./public-job";
 import type { MediaDownloadRequest } from "./types";
 
-export function getMediaDownloaderPayload() {
-  return getMediaDownloaderInfo();
+type MediaDownloaderPayloadOptions = {
+  includeLocalOutputDir?: boolean;
+};
+
+export function getMediaDownloaderPayload(options: MediaDownloaderPayloadOptions = {}) {
+  const { downloadDir, ...info } = getMediaDownloaderInfo();
+
+  return {
+    ...info,
+    canPickLocalFolder: Boolean(options.includeLocalOutputDir && info.canPickLocalFolder),
+    downloadDir: options.includeLocalOutputDir ? downloadDir : ""
+  };
 }
 
 export function getMediaDownloadJobPayload(jobId: string) {
@@ -13,15 +24,24 @@ export function getMediaDownloadJobPayload(jobId: string) {
   }
 
   return {
-    job,
+    job: toMediaDownloadPublicJob(job),
     canDownload: job.status === "completed" && Boolean(job.outputPath),
     timestamp: new Date().toISOString()
   };
 }
 
 export function startMediaDownload(input: MediaDownloadRequest) {
-  return createMediaDownloadJob(input);
+  const result = createMediaDownloadJob(input);
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ...result,
+    job: toMediaDownloadPublicJob(result.job)
+  };
 }
 
 export { getMediaDownloadJob } from "./service";
-export type { MediaDownloadRequest } from "./types";
+export type { MediaDownloadPublicJob, MediaDownloadRequest } from "./types";

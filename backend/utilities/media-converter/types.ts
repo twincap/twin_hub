@@ -20,6 +20,7 @@ export type MediaConvertRequest = {
   profileId: string;
   outputName?: string;
   outputDir?: string;
+  removeInputOnFinish?: boolean;
 };
 
 export type MediaConvertJob = {
@@ -39,7 +40,13 @@ export type MediaConvertJob = {
   logs: string[];
   error?: string;
   processId?: number;
+  removeInputOnFinish?: boolean;
 };
+
+export type MediaConvertPublicJob = Pick<
+  MediaConvertJob,
+  "id" | "status" | "profileId" | "originalName" | "createdAt" | "updatedAt" | "fileName" | "progress" | "error"
+>;
 
 export type MediaConverterConfig = {
   enabled: boolean;

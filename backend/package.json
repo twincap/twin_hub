@@ -9,9 +9,11 @@
     "./utilities/media-converter": "./utilities/media-converter/index.ts",
     "./utilities/media-downloader": "./utilities/media-downloader/index.ts",
     "./utilities/pdf-merger": "./utilities/pdf-merger/index.ts",
+    "./lib/runtime": "./lib/runtime.ts",
     "./lib/supabase/server": "./lib/supabase/server.ts"
   },
   "scripts": {
+    "test": "node --test",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

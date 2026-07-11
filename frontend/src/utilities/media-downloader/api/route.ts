@@ -4,6 +4,8 @@ import {
   getMediaDownloaderPayload,
   startMediaDownload
 } from "@twin-hub/backend/utilities/media-downloader";
+import type { MediaDownloadRequest } from "@twin-hub/backend/utilities/media-downloader";
+import { canUseLocalFileAccess, getLocalOutputDir, isSameOriginMutation } from "@/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,7 +15,11 @@ export async function GET(request: Request) {
   const jobId = searchParams.get("jobId");
 
   if (!jobId) {
-    return NextResponse.json(getMediaDownloaderPayload());
+    return NextResponse.json(
+      getMediaDownloaderPayload({
+        includeLocalOutputDir: canUseLocalFileAccess(request)
+      })
+    );
   }
 
   const payload = getMediaDownloadJobPayload(jobId);
@@ -33,12 +39,37 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const body = await request.json();
+  if (!isSameOriginMutation(request)) {
+    return NextResponse.json(
+      {
+        error: "Cross-origin requests are not allowed."
+      },
+      {
+        status: 403
+      }
+    );
+  }
+
+  let body: Record<string, unknown>;
+
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json(
+      {
+        error: "A JSON request body is required."
+      },
+      {
+        status: 400
+      }
+    );
+  }
+
   const result = startMediaDownload({
     url: String(body.url ?? ""),
-    format: body.format,
+    format: String(body.format ?? "") as MediaDownloadRequest["format"],
     fileName: body.fileName ? String(body.fileName) : undefined,
-    outputDir: body.outputDir ? String(body.outputDir) : undefined
+    outputDir: getLocalOutputDir(request, body.outputDir)
   });
 
   if (!result.ok) {

@@ -1,8 +1,19 @@
 import { createMediaConvertJob, getMediaConverterInfo, getMediaConvertJob } from "./service";
+import { toMediaConvertPublicJob } from "./public-job";
 import type { MediaConvertRequest } from "./types";
 
-export function getMediaConverterPayload() {
-  return getMediaConverterInfo();
+type MediaConverterPayloadOptions = {
+  includeLocalOutputDir?: boolean;
+};
+
+export function getMediaConverterPayload(options: MediaConverterPayloadOptions = {}) {
+  const { convertDir, ...info } = getMediaConverterInfo();
+
+  return {
+    ...info,
+    canPickLocalFolder: Boolean(options.includeLocalOutputDir && info.canPickLocalFolder),
+    convertDir: options.includeLocalOutputDir ? convertDir : ""
+  };
 }
 
 export function getMediaConvertJobPayload(jobId: string) {
@@ -13,15 +24,24 @@ export function getMediaConvertJobPayload(jobId: string) {
   }
 
   return {
-    job,
+    job: toMediaConvertPublicJob(job),
     canDownload: job.status === "completed" && Boolean(job.outputPath),
     timestamp: new Date().toISOString()
   };
 }
 
 export function startMediaConvert(input: MediaConvertRequest) {
-  return createMediaConvertJob(input);
+  const result = createMediaConvertJob(input);
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ...result,
+    job: toMediaConvertPublicJob(result.job)
+  };
 }
 
 export { getMediaConvertJob } from "./service";
-export type { MediaConvertRequest } from "./types";
+export type { MediaConvertPublicJob, MediaConvertRequest } from "./types";

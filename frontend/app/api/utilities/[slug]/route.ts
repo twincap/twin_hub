@@ -23,10 +23,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
     );
   }
 
-  const backendPayload = await getUtilityBackendPayload({
-    slug,
-    utility
-  });
+  const backendPayload = await getUtilityBackendPayload(slug);
 
   return NextResponse.json(
     backendPayload ?? {

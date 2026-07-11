@@ -3,31 +3,31 @@ import { UtilityIndex } from "@/components/utility-index";
 import { utilities } from "@/utilities/registry";
 
 export default function HomePage() {
+  const categoryCount = new Set(utilities.map((utility) => utility.category)).size;
+  const betaCount = utilities.filter((utility) => utility.status === "beta").length;
+
   return (
     <div className="app-frame">
       <SiteHeader />
       <main className="page-shell">
         <section className="dashboard-intro" aria-labelledby="home-title">
           <div className="intro-copy">
-            <p className="eyebrow">작업공간</p>
+            <p className="eyebrow">유틸 작업공간</p>
             <h1 id="home-title">Twin Hub</h1>
+            <p className="intro-summary">등록된 기능과 현재 상태를 한곳에서 확인할 수 있습니다.</p>
           </div>
-          <div className="system-panel" aria-label="프로젝트 구조">
+          <div className="system-panel" aria-label="등록 현황">
             <div className="system-row">
-              <span>프론트엔드</span>
-              <strong>Next.js App Router</strong>
+              <span>전체 유틸</span>
+              <strong>{utilities.length}개</strong>
             </div>
             <div className="system-row">
-              <span>백엔드</span>
-              <strong>유틸별 모듈</strong>
+              <span>카테고리</span>
+              <strong>{categoryCount}개</strong>
             </div>
             <div className="system-row">
-              <span>데이터베이스</span>
-              <strong>Supabase 준비됨</strong>
-            </div>
-            <div className="system-row">
-              <span>배포</span>
-              <strong>Vercel</strong>
+              <span>베타</span>
+              <strong>{betaCount}개</strong>
             </div>
           </div>
         </section>

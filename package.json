@@ -12,6 +12,7 @@
     "start": "npm run start --workspace frontend",
     "lint": "npm run lint --workspace frontend",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "check": "npm run lint && npm run typecheck && npm run build"
+    "test": "npm run test --workspaces --if-present",
+    "check": "npm run lint && npm run typecheck && npm run test && npm run build"
   }
 }

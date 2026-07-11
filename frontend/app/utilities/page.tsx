@@ -11,13 +11,7 @@ export default function UtilitiesPage() {
     <div className="app-frame">
       <SiteHeader />
       <main className="page-shell">
-        <div className="section-head">
-          <div>
-            <p className="eyebrow">유틸</p>
-            <h1>목록</h1>
-          </div>
-        </div>
-        <UtilityIndex utilities={utilities} />
+        <UtilityIndex headingLevel={1} utilities={utilities} />
       </main>
     </div>
   );

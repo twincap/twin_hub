@@ -16,7 +16,14 @@ export function SiteHeader() {
           <LayoutGrid size={18} aria-hidden="true" />
           유틸
         </Link>
-        <a className="icon-button" href="https://github.com/twincap/twin_hub" aria-label="GitHub" title="GitHub">
+        <a
+          className="icon-button"
+          href="https://github.com/twincap/twin_hub"
+          aria-label="GitHub 저장소(새 창)"
+          rel="noreferrer"
+          target="_blank"
+          title="GitHub 저장소"
+        >
           <GitBranch size={18} aria-hidden="true" />
         </a>
       </nav>

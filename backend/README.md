@@ -19,12 +19,14 @@ npm run dev
 
 ```bash
 npm run typecheck --workspace backend
+npm run test --workspace backend
 ```
 
 전체 타입체크:
 
 ```bash
 npm run typecheck
+npm run test
 ```
 
 ## 폴더 구조
@@ -130,6 +132,10 @@ ffmpeg
 MEDIA_DOWNLOADER_ENABLED=true
 YT_DLP_PATH=yt-dlp
 YT_DLP_JS_RUNTIME=node
+YT_DLP_SOCKET_TIMEOUT_SECONDS=30
+YT_DLP_RETRIES=10
+YT_DLP_FRAGMENT_RETRIES=10
+YT_DLP_STALLED_TIMEOUT_MS=120000
 YT_DLP_NO_OUTPUT_TIMEOUT_MS=1800000
 MEDIA_DOWNLOAD_DIR=
 ```

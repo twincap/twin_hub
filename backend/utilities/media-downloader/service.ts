@@ -1,8 +1,9 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, statSync } from "node:fs";
-import os from "node:os";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { canUseLocalDesktopPaths, getDefaultUtilityOutputDir } from "../../lib/runtime.ts";
+import { resolveMediaDownloadOutputPath } from "./output.ts";
 import type { MediaDownloadJob, MediaDownloadRequest, MediaDownloaderConfig } from "./types";
 
 type JobStore = Map<string, MediaDownloadJob>;
@@ -27,6 +28,10 @@ const supportedHosts = [
 ];
 
 const defaultNoOutputTimeoutMs = 30 * 60 * 1000;
+const defaultStalledTimeoutMs = 2 * 60 * 1000;
+const defaultYtdlpSocketTimeoutSeconds = 30;
+const defaultYtdlpRetries = 10;
+const defaultYtdlpFragmentRetries = 10;
 
 export function getMediaDownloaderConfig(): MediaDownloaderConfig {
   return {
@@ -34,7 +39,11 @@ export function getMediaDownloaderConfig(): MediaDownloaderConfig {
     downloadDir: resolveConfiguredDownloadDir(process.env.MEDIA_DOWNLOAD_DIR),
     ytdlpPath: process.env.YT_DLP_PATH ?? "yt-dlp",
     ytdlpJsRuntime: process.env.YT_DLP_JS_RUNTIME ?? "node",
-    noOutputTimeoutMs: parseNoOutputTimeout(process.env.YT_DLP_NO_OUTPUT_TIMEOUT_MS)
+    ytdlpSocketTimeoutSeconds: parsePositiveInteger(process.env.YT_DLP_SOCKET_TIMEOUT_SECONDS, defaultYtdlpSocketTimeoutSeconds),
+    ytdlpRetries: parsePositiveInteger(process.env.YT_DLP_RETRIES, defaultYtdlpRetries),
+    ytdlpFragmentRetries: parsePositiveInteger(process.env.YT_DLP_FRAGMENT_RETRIES, defaultYtdlpFragmentRetries),
+    noOutputTimeoutMs: parseNonNegativeInteger(process.env.YT_DLP_NO_OUTPUT_TIMEOUT_MS, defaultNoOutputTimeoutMs),
+    stalledTimeoutMs: parseNonNegativeInteger(process.env.YT_DLP_STALLED_TIMEOUT_MS, defaultStalledTimeoutMs)
   };
 }
 
@@ -44,9 +53,14 @@ export function getMediaDownloaderInfo() {
   return {
     enabled: config.enabled,
     downloadDir: config.downloadDir,
-    ytdlpPath: config.ytdlpPath,
+    canPickLocalFolder: canUseLocalDesktopPaths(),
+    storesOnServer: !canUseLocalDesktopPaths(),
     ytdlpJsRuntime: config.ytdlpJsRuntime,
+    ytdlpSocketTimeoutSeconds: config.ytdlpSocketTimeoutSeconds,
+    ytdlpRetries: config.ytdlpRetries,
+    ytdlpFragmentRetries: config.ytdlpFragmentRetries,
     noOutputTimeoutMs: config.noOutputTimeoutMs,
+    stalledTimeoutMs: config.stalledTimeoutMs,
     supportedHosts,
     requires: ["yt-dlp", "ffmpeg for mp3/wav/opus conversion"],
     source: "backend/utilities/media-downloader",
@@ -55,7 +69,13 @@ export function getMediaDownloaderInfo() {
 }
 
 export function getMediaDownloadJob(jobId: string) {
-  return jobs.get(jobId) ?? null;
+  const job = jobs.get(jobId) ?? null;
+
+  if (job) {
+    refreshFinishedJob(job);
+  }
+
+  return job;
 }
 
 export function createMediaDownloadJob(input: MediaDownloadRequest) {
@@ -84,6 +104,7 @@ export function createMediaDownloadJob(input: MediaDownloadRequest) {
     createdAt: now,
     updatedAt: now,
     lastOutputAt: now,
+    lastProgressAt: now,
     logs: []
   };
 
@@ -152,16 +173,26 @@ function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, confi
   const args = [
     "--no-playlist",
     "--newline",
+    "--progress-template",
+    "download:%(progress._percent_str)s",
+    "--no-continue",
+    "--socket-timeout",
+    String(config.ytdlpSocketTimeoutSeconds),
+    "--retries",
+    String(config.ytdlpRetries),
+    "--fragment-retries",
+    String(config.ytdlpFragmentRetries),
     "--restrict-filenames",
     "--live-from-start",
     "--hls-use-mpegts",
     ...buildJsRuntimeArgs(config),
+    ...buildSiteHeaderArgs(input.url),
     "--paths",
     `home:${outputDir}`,
     "--output",
     outputTemplate,
     "--print",
-    "after_move:filepath",
+    "after_video:filepath",
     ...buildFormatArgs(input.format),
     input.url
   ];
@@ -180,12 +211,22 @@ function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, confi
       return;
     }
 
+    const now = Date.now();
     const lastOutputAt = job.lastOutputAt ? Date.parse(job.lastOutputAt) : Date.parse(job.updatedAt);
-    const silentMs = Date.now() - lastOutputAt;
+    const lastProgressAt = job.lastProgressAt ? Date.parse(job.lastProgressAt) : Date.parse(job.updatedAt);
+    const silentMs = now - lastOutputAt;
+    const stalledMs = now - lastProgressAt;
 
     if (config.noOutputTimeoutMs > 0 && silentMs > config.noOutputTimeoutMs) {
-      child.kill();
+      killProcessTree(child.pid);
       failJob(job, `yt-dlp output stopped for more than ${Math.round(config.noOutputTimeoutMs / 1000)} seconds.`);
+      clearInterval(watchdog);
+      return;
+    }
+
+    if (config.stalledTimeoutMs > 0 && stalledMs > config.stalledTimeoutMs) {
+      killProcessTree(child.pid);
+      failJob(job, `yt-dlp made no progress for more than ${Math.round(config.stalledTimeoutMs / 1000)} seconds.`);
       clearInterval(watchdog);
     }
   }, 10000);
@@ -212,14 +253,14 @@ function startDownload(job: MediaDownloadJob, input: MediaDownloadRequest, confi
       return;
     }
 
-    const outputPath = resolveOutputPath(job);
+    const outputPath = resolveMediaDownloadOutputPath(job, input.format);
 
     if (code === 0 && outputPath) {
       completeJob(job, outputPath);
       return;
     }
 
-    failJob(job, `yt-dlp exited with code ${code ?? "unknown"}.`);
+    failJob(job, getYtdlpFailureMessage(job, code));
   });
 }
 
@@ -241,22 +282,84 @@ function buildJsRuntimeArgs(config: MediaDownloaderConfig) {
   return ["--js-runtimes", runtime];
 }
 
-function parseNoOutputTimeout(value: string | undefined) {
+function buildSiteHeaderArgs(url: string) {
+  if (!isBilibiliUrl(url)) {
+    return [];
+  }
+
+  return [
+    "--add-header",
+    "Referer:https://www.bilibili.com",
+    "--add-header",
+    "Origin:https://www.bilibili.com",
+    "--add-header",
+    "User-Agent:Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+  ];
+}
+
+function isBilibiliUrl(url: string) {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+
+    return hostname === "b23.tv" || hostname.endsWith("bilibili.com");
+  } catch {
+    return false;
+  }
+}
+
+function getYtdlpFailureMessage(job: MediaDownloadJob, code: number | null) {
+  const recentError = [...job.logs]
+    .reverse()
+    .find((line) => line.startsWith("ERROR:") || line.includes("HTTP Error") || line.includes("Use --cookies"));
+
+  if (recentError) {
+    return recentError.replace(/^ERROR:\s*/, "");
+  }
+
+  return `yt-dlp exited with code ${code ?? "unknown"}.`;
+}
+
+function killProcessTree(pid: number | undefined) {
+  if (!pid) {
+    return;
+  }
+
+  if (process.platform === "win32") {
+    spawnSync("taskkill", ["/pid", String(pid), "/t", "/f"], {
+      windowsHide: true
+    });
+    return;
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch {
+    // The process may already have exited.
+  }
+}
+
+function parsePositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = parseNonNegativeInteger(value, fallback);
+
+  return parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeInteger(value: string | undefined, fallback: number) {
   if (!value) {
-    return defaultNoOutputTimeoutMs;
+    return fallback;
   }
 
   const parsed = Number(value);
 
   if (!Number.isFinite(parsed) || parsed < 0) {
-    return defaultNoOutputTimeoutMs;
+    return fallback;
   }
 
   return Math.floor(parsed);
 }
 
 function getDefaultDownloadsDir() {
-  return path.join(os.homedir(), "Downloads");
+  return getDefaultUtilityOutputDir("media-downloads");
 }
 
 function resolveConfiguredDownloadDir(value: string | undefined) {
@@ -274,6 +377,10 @@ function resolveConfiguredDownloadDir(value: string | undefined) {
 }
 
 function resolveOutputDir(outputDir: string | undefined, fallbackDir: string) {
+  if (!canUseLocalDesktopPaths()) {
+    return fallbackDir;
+  }
+
   const configured = outputDir?.trim();
 
   if (!configured) {
@@ -307,17 +414,29 @@ function buildOutputTemplate(fileName?: string) {
 function handleOutput(job: MediaDownloadJob, output: string) {
   const lines = output
     .split(/\r?\n/)
-    .map((line) => line.trim())
+    .map((line) => stripAnsi(line).trim())
     .filter(Boolean);
+
+  const previousProgress = job.progress;
 
   for (const line of lines) {
     handleProgressLine(job, line);
     job.logs.push(line);
   }
 
+  const now = new Date().toISOString();
+
   job.logs = job.logs.slice(-80);
-  job.lastOutputAt = new Date().toISOString();
-  job.updatedAt = new Date().toISOString();
+  job.lastOutputAt = now;
+  job.updatedAt = now;
+
+  if (job.progress > previousProgress) {
+    job.lastProgressAt = now;
+  }
+}
+
+function stripAnsi(value: string) {
+  return value.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
 function handleProgressLine(job: MediaDownloadJob, line: string) {
@@ -348,16 +467,28 @@ function handleProgressLine(job: MediaDownloadJob, line: string) {
   }
 }
 
-function resolveOutputPath(job: MediaDownloadJob) {
-  for (const line of [...job.logs].reverse()) {
-    const candidate = path.resolve(line);
-
-    if (path.isAbsolute(candidate) && existsSync(candidate) && statSync(candidate).isFile()) {
-      return candidate;
-    }
+function refreshFinishedJob(job: MediaDownloadJob) {
+  if (job.status !== "running" || !job.processId || isProcessAlive(job.processId)) {
+    return;
   }
 
-  return null;
+  const outputPath = resolveMediaDownloadOutputPath(job, job.format);
+
+  if (outputPath) {
+    completeJob(job, outputPath);
+    return;
+  }
+
+  failJob(job, "yt-dlp stopped before reporting the completed file.");
+}
+
+function isProcessAlive(pid: number) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function completeJob(job: MediaDownloadJob, outputPath: string) {

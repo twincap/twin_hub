@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import type { CSSProperties, ReactNode } from "react";
+import { getUtilityStatusLabel } from "@/utilities/labels";
 import type { UtilityDefinition } from "@/utilities/types";
 
 type UtilityPageShellProps = {
@@ -12,13 +13,16 @@ export function UtilityPageShell({ utility, children }: UtilityPageShellProps) {
   return (
     <section className="utility-page" style={{ "--accent": utility.accent } as CSSProperties}>
       <div className="utility-hero compact">
-        <h1>{utility.name}</h1>
-      </div>
-
-      <div className="inline-actions">
-        <Link className="button" href="/">
+        <div>
+          <p className="eyebrow">
+            {utility.category} · {getUtilityStatusLabel(utility.status)}
+          </p>
+          <h1>{utility.name}</h1>
+          <p>{utility.description}</p>
+        </div>
+        <Link className="button" href="/utilities">
           <ArrowLeft size={16} aria-hidden="true" />
-          허브
+          전체 유틸
         </Link>
       </div>
 

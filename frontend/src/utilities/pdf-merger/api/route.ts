@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getPdfMergerPayload, inspectPdfPayload, mergePdfPayload } from "@twin-hub/backend/utilities/pdf-merger";
 import type { PdfPageRef, PdfSourceFile } from "@twin-hub/backend/utilities/pdf-merger";
+import { isSameOriginMutation } from "@/server/request-security";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -10,8 +11,33 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  if (!isSameOriginMutation(request)) {
+    return NextResponse.json(
+      {
+        error: "Cross-origin requests are not allowed."
+      },
+      {
+        status: 403
+      }
+    );
+  }
+
   const info = getPdfMergerPayload();
-  const formData = await request.formData();
+  let formData: FormData;
+
+  try {
+    formData = await request.formData();
+  } catch {
+    return NextResponse.json(
+      {
+        error: "A multipart form body is required."
+      },
+      {
+        status: 400
+      }
+    );
+  }
+
   const action = String(formData.get("action") ?? "inspect");
   const files = await readPdfFiles(formData, info.maxUploadMb);
 
