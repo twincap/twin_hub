@@ -1,0 +1,112 @@
+.base64-utility {
+  gap: 16px;
+}
+
+.base64-toolbar,
+.base64-actions,
+.base64-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.base64-toolbar .runtime-pill {
+  gap: 6px;
+}
+
+.base64-form {
+  display: grid;
+  gap: 14px;
+}
+
+.base64-editor-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.base64-editor {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.base64-field-head label {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.base64-field-head span {
+  color: var(--subtle);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.base64-editor textarea {
+  min-height: 310px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
+.base64-editor textarea[readonly] {
+  background: color-mix(in srgb, var(--input) 82%, var(--panel-soft));
+}
+
+.base64-direction {
+  display: grid;
+  width: 42px;
+  place-items: center;
+  align-self: end;
+  height: 310px;
+  color: var(--subtle);
+}
+
+.base64-actions > .inline-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.base64-notice {
+  min-height: 46px;
+}
+
+@media (max-width: 760px) {
+  .base64-editor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .base64-direction {
+    width: 100%;
+    height: 26px;
+    align-self: auto;
+  }
+
+  .base64-direction svg {
+    transform: rotate(90deg);
+  }
+
+  .base64-editor textarea {
+    min-height: 220px;
+  }
+}
+
+@media (max-width: 620px) {
+  .base64-toolbar,
+  .base64-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .base64-toolbar .runtime-pill {
+    align-self: flex-start;
+  }
+
+  .base64-actions > .button,
+  .base64-actions > .inline-actions,
+  .base64-actions > .inline-actions .button {
+    width: 100%;
+  }
+}

@@ -1,3 +1,4 @@
+import Base64ConverterUtility from "@/utilities/base64-converter/page";
 import MediaConverterUtility from "@/utilities/media-converter/page";
 import MediaDownloaderUtility from "@/utilities/media-downloader/page";
 import PdfMergerUtility from "@/utilities/pdf-merger/page";
@@ -10,6 +11,7 @@ type UtilityRendererProps = {
 };
 
 const utilityComponents: Record<UtilitySlug, ComponentType> = {
+  "base64-converter": Base64ConverterUtility,
   "media-converter": MediaConverterUtility,
   "media-downloader": MediaDownloaderUtility,
   "pdf-merger": PdfMergerUtility
