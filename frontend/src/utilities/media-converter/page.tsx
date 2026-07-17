@@ -1,9 +1,12 @@
 "use client";
 
-import { Download, FilePlus2, Loader2, RefreshCw } from "lucide-react";
+import { Download, FilePlus2, Loader2, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { JobProgress } from "@/components/job-progress";
-import { convertMediaInBrowser } from "@/utilities/media-converter/browser-ffmpeg";
+import {
+  convertMediaInBrowser,
+  disposeBrowserFfmpeg
+} from "@/utilities/media-converter/browser-ffmpeg";
 import {
   BROWSER_CONVERTER_MAX_MB,
   browserConvertProfiles
@@ -20,6 +23,8 @@ type QueueItem = {
 };
 
 const activeStatuses = new Set(["queued", "running"]);
+const maxBatchFiles = 5;
+const maxQueueItems = 10;
 const profileGroups = [
   { kind: "audio" as const, label: "오디오" },
   { kind: "video" as const, label: "비디오" },
@@ -34,19 +39,28 @@ export default function MediaConverterUtility() {
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const browserDownloadUrlsRef = useRef(new Set<string>());
+  const mountedRef = useRef(false);
+  const submittingRef = useRef(false);
   const selectedProfile = browserConvertProfiles.find((profile) => profile.id === profileId);
 
   useEffect(() => {
     const urls = browserDownloadUrlsRef.current;
+    mountedRef.current = true;
 
     return () => {
+      mountedRef.current = false;
       urls.forEach((url) => URL.revokeObjectURL(url));
       urls.clear();
+      disposeBrowserFfmpeg();
     };
   }, []);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (submittingRef.current) {
+      return;
+    }
 
     if (files.length === 0) {
       setError("변환할 파일을 선택하세요.");
@@ -60,6 +74,16 @@ export default function MediaConverterUtility() {
       return;
     }
 
+    if (files.length > maxBatchFiles) {
+      setError(`한 번에 최대 ${maxBatchFiles}개 파일을 변환할 수 있습니다.`);
+      return;
+    }
+
+    if (queue.length + files.length > maxQueueItems) {
+      setError(`결과 목록은 최대 ${maxQueueItems}개입니다. 저장한 항목을 목록에서 제거한 뒤 다시 시도하세요.`);
+      return;
+    }
+
     const oversizedFile = files.find((file) => file.size > BROWSER_CONVERTER_MAX_MB * 1024 * 1024);
 
     if (oversizedFile) {
@@ -67,6 +91,7 @@ export default function MediaConverterUtility() {
       return;
     }
 
+    submittingRef.current = true;
     setSubmitting(true);
     setError("");
 
@@ -77,11 +102,19 @@ export default function MediaConverterUtility() {
       progress: 0
     }));
 
-    setQueue((current) => [...items, ...current]);
+    setQueue([...items, ...queue]);
 
     try {
       for (const [index, item] of items.entries()) {
+        if (!mountedRef.current) {
+          break;
+        }
+
         await startBrowserConversion(item.localId, files[index], profile);
+      }
+
+      if (!mountedRef.current) {
+        return;
       }
 
       setFiles([]);
@@ -90,7 +123,11 @@ export default function MediaConverterUtility() {
         fileInputRef.current.value = "";
       }
     } finally {
-      setSubmitting(false);
+      submittingRef.current = false;
+
+      if (mountedRef.current) {
+        setSubmitting(false);
+      }
     }
   }
 
@@ -99,6 +136,10 @@ export default function MediaConverterUtility() {
     file: File,
     profile: (typeof browserConvertProfiles)[number]
   ) {
+    if (!mountedRef.current) {
+      return;
+    }
+
     updateQueueItem(localId, {
       status: "running",
       progress: 1,
@@ -107,11 +148,20 @@ export default function MediaConverterUtility() {
 
     try {
       const result = await convertMediaInBrowser(file, profile, (progress) => {
+        if (!mountedRef.current) {
+          return;
+        }
+
         updateQueueItem(localId, {
           status: "running",
           progress
         });
       });
+
+      if (!mountedRef.current) {
+        return;
+      }
+
       const downloadUrl = URL.createObjectURL(result.blob);
 
       browserDownloadUrlsRef.current.add(downloadUrl);
@@ -123,6 +173,10 @@ export default function MediaConverterUtility() {
         error: undefined
       });
     } catch (conversionError) {
+      if (!mountedRef.current) {
+        return;
+      }
+
       updateQueueItem(localId, {
         status: "failed",
         error: conversionError instanceof Error ? conversionError.message : "브라우저 변환에 실패했습니다."
@@ -132,6 +186,26 @@ export default function MediaConverterUtility() {
 
   function updateQueueItem(localId: string, update: Partial<QueueItem>) {
     setQueue((current) => current.map((item) => (item.localId === localId ? { ...item, ...update } : item)));
+  }
+
+  function removeQueueItem(localId: string) {
+    const item = queue.find((candidate) => candidate.localId === localId);
+
+    if (!item || activeStatuses.has(item.status)) {
+      return;
+    }
+
+    releaseQueueItemUrl(item);
+    setQueue((current) => current.filter((candidate) => candidate.localId !== localId));
+  }
+
+  function releaseQueueItemUrl(item: QueueItem) {
+    if (!item.downloadUrl) {
+      return;
+    }
+
+    URL.revokeObjectURL(item.downloadUrl);
+    browserDownloadUrlsRef.current.delete(item.downloadUrl);
   }
 
   return (
@@ -187,7 +261,9 @@ export default function MediaConverterUtility() {
           변환 시작
         </button>
 
-        <span className="runtime-pill form-span">브라우저 처리 · 파일당 최대 {BROWSER_CONVERTER_MAX_MB}MB</span>
+        <span className="runtime-pill form-span">
+          브라우저 처리 · 한 번 최대 {maxBatchFiles}개 · 파일당 최대 {BROWSER_CONVERTER_MAX_MB}MB
+        </span>
       </form>
 
       {error ? <div className="error-box" role="alert">{error}</div> : null}
@@ -204,7 +280,7 @@ export default function MediaConverterUtility() {
         <div className="queue-list">
           {queue.length === 0 ? <div className="empty-state">등록된 파일이 없습니다.</div> : null}
           {queue.map((item) => (
-            <QueueRow item={item} key={item.localId} />
+            <QueueRow item={item} key={item.localId} onRemove={() => removeQueueItem(item.localId)} />
           ))}
         </div>
       </section>
@@ -212,12 +288,24 @@ export default function MediaConverterUtility() {
   );
 }
 
-function QueueRow({ item }: { item: QueueItem }) {
+function QueueRow({ item, onRemove }: { item: QueueItem; onRemove: () => void }) {
   return (
     <div aria-busy={activeStatuses.has(item.status)} className="queue-item">
       <div className="queue-title">
         <strong>{item.downloadName ?? item.fileName}</strong>
-        <span className="runtime-pill">{translateStatus(item.status)}</span>
+        <div className="inline-actions">
+          <span className="runtime-pill">{translateStatus(item.status)}</span>
+          <button
+            aria-label={`${item.fileName} 목록에서 제거`}
+            className="icon-button"
+            disabled={activeStatuses.has(item.status)}
+            onClick={onRemove}
+            title="목록에서 제거"
+            type="button"
+          >
+            <Trash2 size={16} aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <JobProgress progress={item.progress} runningLabel="작업 중" status={item.status} />
       {item.error ? <div className="error-box" role="alert">{item.error}</div> : null}
