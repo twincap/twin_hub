@@ -3,6 +3,11 @@
 import { Download, FilePlus2, FolderOpen, Loader2, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { JobProgress } from "@/components/job-progress";
+import { convertMediaInBrowser } from "@/utilities/media-converter/browser-ffmpeg";
+import {
+  BROWSER_CONVERTER_MAX_MB,
+  browserConvertProfiles
+} from "@/utilities/media-converter/browser-profiles";
 
 type ConvertProfile = {
   id: string;
@@ -13,7 +18,10 @@ type ConvertProfile = {
   audioCodec?: string;
   videoCodec?: string;
   notes?: string;
+  ffmpegArgs?: string[];
 };
+
+type ProcessingMode = "browser" | "server";
 
 type ConvertJob = {
   id: string;
@@ -28,8 +36,12 @@ type ConvertJob = {
 type QueueItem = {
   localId: string;
   fileName: string;
-  status: "uploading" | "queued" | "failed";
+  mode: ProcessingMode;
+  status: "uploading" | "queued" | "running" | "completed" | "failed";
   job?: ConvertJob;
+  progress?: number;
+  downloadUrl?: string;
+  downloadName?: string;
   error?: string;
 };
 
@@ -68,11 +80,10 @@ const profileGroups = [
 ];
 
 export default function MediaConverterUtility() {
-  const [profiles, setProfiles] = useState<ConvertProfile[]>([]);
-  const [enabled, setEnabled] = useState(false);
-  const [ffmpegDetected, setFfmpegDetected] = useState<boolean | null>(null);
-  const [maxUploadMb, setMaxUploadMb] = useState(512);
-  const [profileId, setProfileId] = useState("");
+  const [profiles, setProfiles] = useState<ConvertProfile[]>(browserConvertProfiles);
+  const [processingMode, setProcessingMode] = useState<ProcessingMode>("browser");
+  const [maxUploadMb, setMaxUploadMb] = useState(BROWSER_CONVERTER_MAX_MB);
+  const [profileId, setProfileId] = useState(browserConvertProfiles[0]?.id ?? "");
   const [files, setFiles] = useState<File[]>([]);
   const [outputDir, setOutputDir] = useState("");
   const [canPickLocalFolder, setCanPickLocalFolder] = useState(false);
@@ -82,9 +93,19 @@ export default function MediaConverterUtility() {
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const browserDownloadUrlsRef = useRef(new Set<string>());
   const selectedProfile = profiles.find((profile) => profile.id === profileId);
 
   useEffect(() => {
+    function activateBrowserMode() {
+      setProcessingMode("browser");
+      setProfiles(browserConvertProfiles);
+      setMaxUploadMb(BROWSER_CONVERTER_MAX_MB);
+      setCanPickLocalFolder(false);
+      setOutputDir("");
+      setProfileId(browserConvertProfiles[0]?.id ?? "");
+    }
+
     async function loadInfo() {
       const response = await fetch("/api/media-converter");
       const payload = (await response.json()) as InfoResponse;
@@ -93,24 +114,43 @@ export default function MediaConverterUtility() {
         throw new Error(payload.error ?? "변환 설정을 불러오지 못했습니다.");
       }
 
-      setProfiles(payload.profiles ?? []);
-      setEnabled(Boolean(payload.enabled));
-      setFfmpegDetected(payload.ffmpegDetected ?? null);
-      setMaxUploadMb(payload.maxUploadMb ?? 512);
-      setCanPickLocalFolder(Boolean(payload.canPickLocalFolder));
-      setOutputDir(payload.canPickLocalFolder ? payload.convertDir ?? "" : "");
-      setProfileId(payload.profiles?.[0]?.id ?? "");
-      setLoadedInfo(true);
+      if (payload.enabled && payload.ffmpegDetected !== false && payload.profiles?.length) {
+        setProcessingMode("server");
+        setProfiles(payload.profiles);
+        setMaxUploadMb(payload.maxUploadMb ?? 512);
+        setCanPickLocalFolder(Boolean(payload.canPickLocalFolder));
+        setOutputDir(payload.canPickLocalFolder ? payload.convertDir ?? "" : "");
+        setProfileId(payload.profiles[0]?.id ?? "");
+        return;
+      }
+
+      activateBrowserMode();
     }
 
-    loadInfo().catch((infoError) => {
-      setLoadedInfo(true);
-      setError(infoError instanceof Error ? infoError.message : "변환 설정을 불러오지 못했습니다.");
-    });
+    loadInfo()
+      .catch(() => {
+        activateBrowserMode();
+      })
+      .finally(() => {
+        setLoadedInfo(true);
+      });
   }, []);
 
   useEffect(() => {
-    const activeItems = queue.filter((item) => item.job && activeStatuses.has(item.job.status));
+    const urls = browserDownloadUrlsRef.current;
+
+    return () => {
+      urls.forEach((url) => URL.revokeObjectURL(url));
+      urls.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (processingMode !== "server") {
+      return;
+    }
+
+    const activeItems = queue.filter((item) => item.mode === "server" && item.job && activeStatuses.has(item.job.status));
 
     if (activeItems.length === 0) {
       return;
@@ -178,7 +218,7 @@ export default function MediaConverterUtility() {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [queue]);
+  }, [processingMode, queue]);
 
   async function handleOutputDirPick() {
     if (!canPickLocalFolder) {
@@ -218,11 +258,6 @@ export default function MediaConverterUtility() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!enabled || ffmpegDetected === false) {
-      setError("변환 기능을 사용할 수 없습니다. FFmpeg 설정을 확인하세요.");
-      return;
-    }
-
     if (files.length === 0) {
       setError("변환할 파일을 선택하세요.");
       return;
@@ -246,13 +281,22 @@ export default function MediaConverterUtility() {
     const items = files.map((file) => ({
       localId: crypto.randomUUID(),
       fileName: file.name,
-      status: "uploading" as const
+      mode: processingMode,
+      status: processingMode === "server" ? ("uploading" as const) : ("queued" as const),
+      progress: 0
     }));
 
     setQueue((current) => [...items, ...current]);
 
     try {
-      await Promise.all(items.map((item, index) => startConversion(item.localId, files[index])));
+      if (processingMode === "server") {
+        await Promise.all(items.map((item, index) => startServerConversion(item.localId, files[index])));
+      } else {
+        for (const [index, item] of items.entries()) {
+          await startBrowserConversion(item.localId, files[index]);
+        }
+      }
+
       setFiles([]);
 
       if (fileInputRef.current) {
@@ -263,7 +307,7 @@ export default function MediaConverterUtility() {
     }
   }
 
-  async function startConversion(localId: string, file: File) {
+  async function startServerConversion(localId: string, file: File) {
     const formData = new FormData();
     formData.set("file", file);
     formData.set("profileId", profileId);
@@ -305,6 +349,52 @@ export default function MediaConverterUtility() {
         )
       );
     }
+  }
+
+  async function startBrowserConversion(localId: string, file: File) {
+    const profile = browserConvertProfiles.find((item) => item.id === profileId);
+
+    if (!profile) {
+      updateBrowserQueueItem(localId, {
+        status: "failed",
+        error: "이 브라우저에서 지원하지 않는 변환 프로필입니다."
+      });
+      return;
+    }
+
+    updateBrowserQueueItem(localId, {
+      status: "running",
+      progress: 1,
+      error: undefined
+    });
+
+    try {
+      const result = await convertMediaInBrowser(file, profile, (progress) => {
+        updateBrowserQueueItem(localId, {
+          status: "running",
+          progress
+        });
+      });
+      const downloadUrl = URL.createObjectURL(result.blob);
+
+      browserDownloadUrlsRef.current.add(downloadUrl);
+      updateBrowserQueueItem(localId, {
+        status: "completed",
+        progress: 100,
+        downloadUrl,
+        downloadName: result.fileName,
+        error: undefined
+      });
+    } catch (conversionError) {
+      updateBrowserQueueItem(localId, {
+        status: "failed",
+        error: conversionError instanceof Error ? conversionError.message : "브라우저 변환에 실패했습니다."
+      });
+    }
+  }
+
+  function updateBrowserQueueItem(localId: string, update: Partial<QueueItem>) {
+    setQueue((current) => current.map((item) => (item.localId === localId ? { ...item, ...update } : item)));
   }
 
   return (
@@ -350,7 +440,7 @@ export default function MediaConverterUtility() {
           </div>
         ) : null}
 
-        {loadedInfo && canPickLocalFolder ? (
+        {loadedInfo && processingMode === "server" && canPickLocalFolder ? (
           <div className="field form-span">
             <label htmlFor="media-convert-output-dir">저장 경로</label>
             <div className="path-picker">
@@ -369,28 +459,31 @@ export default function MediaConverterUtility() {
           </div>
         ) : null}
 
-        {loadedInfo && !canPickLocalFolder ? (
+        {loadedInfo && processingMode === "server" && !canPickLocalFolder ? (
           <div className="notice-box form-span" role="status">
             배포 환경에서는 로컬 폴더를 직접 선택할 수 없습니다. 변환이 끝난 뒤 다시 받기 버튼으로 파일을 저장하세요.
           </div>
         ) : null}
 
-        {loadedInfo && (!enabled || ffmpegDetected === false) ? (
+        {loadedInfo && processingMode === "browser" ? (
           <div className="notice-box form-span" role="status">
-            {!enabled ? "이 서버에서는 코덱 변환 기능이 꺼져 있습니다." : "서버에서 FFmpeg를 찾지 못했습니다."}
+            서버 없이 브라우저에서 직접 변환합니다. 파일은 외부로 업로드되지 않으며, 첫 실행 때 약 31MB의
+            FFmpeg 엔진을 불러옵니다. 여러 파일은 메모리 보호를 위해 차례대로 처리합니다.
           </div>
         ) : null}
 
         <button
           className="button primary form-span"
-          disabled={submitting || !loadedInfo || !enabled || ffmpegDetected === false || !profileId || files.length === 0}
+          disabled={submitting || !loadedInfo || !profileId || files.length === 0}
           type="submit"
         >
           {submitting ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <FilePlus2 size={16} aria-hidden="true" />}
           대기열에 등록
         </button>
 
-        <span className="runtime-pill form-span">최대 업로드 {maxUploadMb}MB</span>
+        <span className="runtime-pill form-span">
+          {processingMode === "browser" ? "브라우저 처리" : "서버 처리"} · 파일당 최대 {maxUploadMb}MB
+        </span>
       </form>
 
       {error ? <div className="error-box" role="alert">{error}</div> : null}
@@ -417,20 +510,21 @@ export default function MediaConverterUtility() {
 
 function QueueRow({ item }: { item: QueueItem }) {
   const job = item.job;
-  const progress = job?.progress ?? 0;
+  const progress = job?.progress ?? item.progress ?? 0;
   const status = job?.status ?? item.status;
-  const downloadUrl = job?.status === "completed" ? `/api/media-converter/file?jobId=${job.id}` : "";
+  const downloadUrl = item.downloadUrl ?? (job?.status === "completed" ? `/api/media-converter/file?jobId=${job.id}` : "");
+  const downloadName = item.downloadName ?? job?.fileName;
 
   return (
     <div aria-busy={status === "uploading" || activeStatuses.has(status)} className="queue-item">
       <div className="queue-title">
-        <strong>{job?.fileName ?? item.fileName}</strong>
+        <strong>{downloadName ?? item.fileName}</strong>
         <span className="runtime-pill">{translateStatus(status)}</span>
       </div>
       <JobProgress progress={progress} runningLabel="작업 중" status={status} />
       {item.error || job?.error ? <div className="error-box" role="alert">{item.error ?? job?.error}</div> : null}
       {downloadUrl ? (
-        <a className="button primary" download={job?.fileName} href={downloadUrl}>
+        <a className="button primary" download={downloadName} href={downloadUrl}>
           <Download size={16} aria-hidden="true" />
           다시 받기
         </a>

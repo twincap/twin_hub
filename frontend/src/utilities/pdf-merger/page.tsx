@@ -1,15 +1,14 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Download, FileStack, GripVertical, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
+import {
+  inspectPdfFiles,
+  mergePdfFiles,
+  PDF_MERGER_MAX_MB,
+  type PdfDocumentInfo
+} from "@/utilities/pdf-merger/client";
 import { moveArrayItem, moveItemToTarget } from "@/utilities/pdf-merger/ordering";
-
-type PdfDocumentInfo = {
-  fileIndex: number;
-  fileName: string;
-  label: string;
-  pageCount: number;
-};
 
 type PageItem = {
   id: string;
@@ -19,20 +18,9 @@ type PageItem = {
   fileLabel: string;
 };
 
-type InfoResponse = {
-  maxUploadMb: number;
-  error?: string;
-};
-
-type InspectResponse = {
-  documents?: PdfDocumentInfo[];
-  error?: string;
-};
-
 type ThumbnailMap = Record<string, string>;
 
 export default function PdfMergerUtility() {
-  const [maxUploadMb, setMaxUploadMb] = useState(512);
   const [files, setFiles] = useState<File[]>([]);
   const [documents, setDocuments] = useState<PdfDocumentInfo[]>([]);
   const [order, setOrder] = useState<PageItem[]>([]);
@@ -49,23 +37,6 @@ export default function PdfMergerUtility() {
 
   const sequenceText = useMemo(() => order.map(formatPageItem).join(" "), [order]);
   const pageCount = order.length;
-
-  useEffect(() => {
-    async function loadInfo() {
-      const response = await fetch("/api/pdf-merger");
-      const payload = (await response.json()) as InfoResponse;
-
-      setMaxUploadMb(payload.maxUploadMb ?? 512);
-
-      if (payload.error) {
-        setError(payload.error);
-      }
-    }
-
-    loadInfo().catch((infoError) => {
-      setError(infoError instanceof Error ? infoError.message : "PDF 병합기 설정을 불러오지 못했습니다.");
-    });
-  }, []);
 
   async function handleFilesChange(event: React.ChangeEvent<HTMLInputElement>) {
     const selectedFiles = Array.from(event.target.files ?? []);
@@ -110,28 +81,15 @@ export default function PdfMergerUtility() {
     setError("");
 
     try {
-      const formData = new FormData();
-
-      formData.set("action", "inspect");
-      nextFiles.forEach((file) => formData.append("files", file));
-
-      const response = await fetch("/api/pdf-merger", {
-        method: "POST",
-        body: formData
-      });
-      const payload = (await response.json()) as InspectResponse;
-
-      if (!response.ok || !payload.documents) {
-        throw new Error(payload.error ?? "PDF 페이지 정보를 읽지 못했습니다.");
-      }
+      const nextDocuments = await inspectPdfFiles(nextFiles);
 
       if (previewRunRef.current !== runId) {
         return;
       }
 
-      const nextOrder = buildPageItems(payload.documents);
+      const nextOrder = buildPageItems(nextDocuments);
 
-      setDocuments(payload.documents);
+      setDocuments(nextDocuments);
       setOrder(nextOrder);
       setInspecting(false);
       await renderPagePreviews(nextFiles, nextOrder, runId);
@@ -266,36 +224,18 @@ export default function PdfMergerUtility() {
     setError("");
 
     try {
-      const formData = new FormData();
-
-      formData.set("action", "merge");
-      formData.set("outputName", outputName);
-      formData.set(
-        "order",
-        JSON.stringify(
-          order.map((item) => ({
-            fileIndex: item.fileIndex,
-            pageIndex: item.pageIndex
-          }))
-        )
+      const result = await mergePdfFiles(
+        files,
+        order.map((item) => ({
+          fileIndex: item.fileIndex,
+          pageIndex: item.pageIndex
+        })),
+        outputName
       );
-      files.forEach((file) => formData.append("files", file));
+      const bytes = result.bytes.buffer.slice(result.bytes.byteOffset, result.bytes.byteOffset + result.bytes.byteLength) as ArrayBuffer;
+      const blob = new Blob([bytes], { type: "application/pdf" });
 
-      const response = await fetch("/api/pdf-merger", {
-        method: "POST",
-        body: formData
-      });
-
-      if (!response.ok) {
-        const payload = (await response.json()) as { error?: string };
-
-        throw new Error(payload.error ?? "PDF 병합에 실패했습니다.");
-      }
-
-      const blob = await response.blob();
-      const fileName = getResponseFileName(response.headers.get("Content-Disposition")) ?? ensurePdfName(outputName);
-
-      downloadBlob(blob, fileName);
+      downloadBlob(blob, result.fileName);
     } catch (mergeError) {
       setError(mergeError instanceof Error ? mergeError.message : "PDF 병합에 실패했습니다.");
     } finally {
@@ -349,7 +289,7 @@ export default function PdfMergerUtility() {
           PDF 병합
         </button>
 
-        <span className="runtime-pill form-span">최대 업로드 {maxUploadMb}MB</span>
+        <span className="runtime-pill form-span">최대 업로드 {PDF_MERGER_MAX_MB}MB</span>
       </form>
 
       {error ? <div className="error-box" role="alert">{error}</div> : null}
@@ -513,22 +453,6 @@ function animateFromRects(container: HTMLDivElement | null, previousRects: Map<s
       }
     );
   });
-}
-
-function ensurePdfName(name: string) {
-  const cleaned = name.trim() || "merged.pdf";
-
-  return cleaned.toLowerCase().endsWith(".pdf") ? cleaned : `${cleaned}.pdf`;
-}
-
-function getResponseFileName(contentDisposition: string | null) {
-  if (!contentDisposition) {
-    return null;
-  }
-
-  const match = contentDisposition.match(/filename\*=UTF-8''([^;]+)/);
-
-  return match ? decodeURIComponent(match[1]) : null;
 }
 
 function downloadBlob(blob: Blob, fileName: string) {

@@ -1,8 +1,9 @@
 "use client";
 
-import { Download, FilePlus2, FolderOpen, Loader2, Music, Video } from "lucide-react";
+import { Download, ExternalLink, FilePlus2, FolderOpen, Loader2, Music, Video } from "lucide-react";
 import { useEffect, useState } from "react";
 import { JobProgress } from "@/components/job-progress";
+import { buildCobaltHandoffUrl } from "@/utilities/media-downloader/cobalt-url";
 
 type DownloadFormat = "video" | "mp3" | "wav" | "opus";
 
@@ -21,7 +22,7 @@ type DownloadJob = {
 type QueueItem = {
   localId: string;
   url: string;
-  status: "requesting" | "queued" | "failed";
+  status: "requesting" | "queued" | "failed" | "external";
   job?: DownloadJob;
   error?: string;
 };
@@ -82,18 +83,21 @@ export default function MediaDownloaderUtility() {
       const localFolderAvailable = Boolean(payload.canPickLocalFolder) && isLocalBrowserHost();
 
       setEnabled(Boolean(payload.enabled));
-      setCanPickLocalFolder(localFolderAvailable);
-      setOutputDir(localFolderAvailable ? payload.downloadDir ?? "" : "");
+      setCanPickLocalFolder(Boolean(payload.enabled) && localFolderAvailable);
+      setOutputDir(payload.enabled && localFolderAvailable ? payload.downloadDir ?? "" : "");
       setLoadedInfo(true);
 
-      if (payload.error) {
+      if (payload.enabled && payload.error) {
         setError(payload.error);
       }
     }
 
-    loadInfo().catch((infoError) => {
+    loadInfo().catch(() => {
+      setEnabled(false);
+      setCanPickLocalFolder(false);
+      setOutputDir("");
       setLoadedInfo(true);
-      setError(infoError instanceof Error ? infoError.message : "다운로드 설정을 불러오지 못했습니다.");
+      setError("");
     });
   }, []);
 
@@ -206,11 +210,6 @@ export default function MediaDownloaderUtility() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (!enabled) {
-      setError("다운로드 기능을 사용할 수 없습니다. 로컬 백엔드 설정을 확인하세요.");
-      return;
-    }
-
     const list = urls
       .split(/\r?\n/)
       .map((value) => value.trim())
@@ -221,20 +220,25 @@ export default function MediaDownloaderUtility() {
       return;
     }
 
-    setSubmitting(true);
     setError("");
 
     const items = list.map((url) => ({
       localId: crypto.randomUUID(),
       url,
-      status: "requesting" as const
+      status: enabled ? ("requesting" as const) : ("external" as const)
     }));
 
     setQueue((current) => [...items, ...current]);
+    setUrls("");
+
+    if (!enabled) {
+      return;
+    }
+
+    setSubmitting(true);
 
     try {
       await Promise.all(items.map((item) => startDownload(item.localId, item.url)));
-      setUrls("");
     } finally {
       setSubmitting(false);
     }
@@ -298,7 +302,7 @@ export default function MediaDownloaderUtility() {
 
         <label className="field">
           <span>파일 형식</span>
-          <select value={format} onChange={(event) => setFormat(event.target.value as DownloadFormat)}>
+          <select disabled={loadedInfo && !enabled} value={format} onChange={(event) => setFormat(event.target.value as DownloadFormat)}>
             <option value="video">MP4</option>
             <option value="mp3">MP3</option>
             <option value="wav">WAV</option>
@@ -306,7 +310,7 @@ export default function MediaDownloaderUtility() {
           </select>
         </label>
 
-        {loadedInfo && canPickLocalFolder ? (
+        {loadedInfo && enabled && canPickLocalFolder ? (
           <div className="field form-span">
             <label htmlFor="media-download-output-dir">저장 경로</label>
             <div className="path-picker">
@@ -325,7 +329,7 @@ export default function MediaDownloaderUtility() {
           </div>
         ) : null}
 
-        {loadedInfo && !canPickLocalFolder ? (
+        {loadedInfo && enabled && !canPickLocalFolder ? (
           <div className="notice-box form-span" role="status">
             배포 환경에서는 로컬 폴더를 직접 선택할 수 없습니다. 완료 후 각 항목의 다시 받기 버튼으로 파일을 저장하세요.
           </div>
@@ -333,13 +337,14 @@ export default function MediaDownloaderUtility() {
 
         {loadedInfo && !enabled ? (
           <div className="notice-box form-span" role="status">
-            이 서버에서는 미디어 다운로드 기능이 꺼져 있습니다.
+            서버를 사용할 수 없어 Cobalt 웹 연결 모드로 동작합니다. URL을 등록한 뒤 각 항목의 링크를 직접 눌러
+            Cobalt에서 다운로드하세요. 파일 형식 선택은 전달되지 않으므로 이동한 화면에서 다시 선택해야 합니다.
           </div>
         ) : null}
 
-        <button className="button primary form-span" disabled={submitting || !loadedInfo || !enabled || !urls.trim()} type="submit">
+        <button className="button primary form-span" disabled={submitting || !loadedInfo || !urls.trim()} type="submit">
           {submitting ? <Loader2 className="spin" size={16} aria-hidden="true" /> : <FilePlus2 size={16} aria-hidden="true" />}
-          대기열에 등록
+          {enabled ? "대기열에 등록" : "Cobalt 링크 만들기"}
         </button>
       </form>
 
@@ -370,6 +375,7 @@ function QueueRow({ item }: { item: QueueItem }) {
   const progress = job?.progress ?? 0;
   const status = job?.status ?? item.status;
   const downloadUrl = job?.status === "completed" ? `/api/media-downloader/file?jobId=${job.id}` : "";
+  const cobaltUrl = item.status === "external" ? buildCobaltHandoffUrl(item.url) : "";
 
   return (
     <div aria-busy={status === "requesting" || activeStatuses.has(status)} className="queue-item">
@@ -377,8 +383,14 @@ function QueueRow({ item }: { item: QueueItem }) {
         <strong>{job?.fileName ?? item.url}</strong>
         <span className="runtime-pill">{translateStatus(status)}</span>
       </div>
-      <JobProgress progress={progress} runningLabel="작업 중" status={status} />
+      {status !== "external" ? <JobProgress progress={progress} runningLabel="작업 중" status={status} /> : null}
       {item.error || job?.error ? <div className="error-box" role="alert">{item.error ?? job?.error}</div> : null}
+      {cobaltUrl ? (
+        <a className="button primary" href={cobaltUrl} rel="noopener noreferrer" target="_blank">
+          <ExternalLink size={16} aria-hidden="true" />
+          Cobalt에서 열기
+        </a>
+      ) : null}
       {downloadUrl ? (
         <a className="button primary" download={job?.fileName} href={downloadUrl}>
           <Download size={16} aria-hidden="true" />
@@ -401,6 +413,8 @@ function translateStatus(status: string) {
       return "완료";
     case "failed":
       return "실패";
+    case "external":
+      return "링크 준비됨";
     default:
       return status;
   }
