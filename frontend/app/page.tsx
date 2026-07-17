@@ -4,7 +4,7 @@ import { utilities } from "@/utilities/registry";
 
 export default function HomePage() {
   const categoryCount = new Set(utilities.map((utility) => utility.category)).size;
-  const betaCount = utilities.filter((utility) => utility.status === "beta").length;
+  const readyCount = utilities.filter((utility) => utility.status === "ready").length;
 
   return (
     <div className="app-frame">
@@ -26,8 +26,8 @@ export default function HomePage() {
               <strong>{categoryCount}개</strong>
             </div>
             <div className="system-row">
-              <span>베타</span>
-              <strong>{betaCount}개</strong>
+              <span>사용 가능</span>
+              <strong>{readyCount}개</strong>
             </div>
           </div>
         </section>
